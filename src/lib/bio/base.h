@@ -53,8 +53,6 @@ typedef enum {
 	FR_BIO_ERROR_VERIFY,				//!< some packet verification error
 	FR_BIO_ERROR_BUFFER_FULL,      			//!< the buffer is full
 	FR_BIO_ERROR_BUFFER_TOO_SMALL,			//!< the output buffer is too small for the data
-
-	FR_BIO_ERROR_EOF, 		   		//!< at EOF
 } fr_bio_error_type_t;
 
 typedef struct fr_bio_s fr_bio_t;
@@ -81,17 +79,21 @@ typedef struct fr_bio_s fr_bio_t;
 typedef ssize_t	(*fr_bio_read_t)(fr_bio_t *bio, void *packet_ctx, void *buffer, size_t size);
 typedef ssize_t	(*fr_bio_write_t)(fr_bio_t *bio, void *packet_ctx, const void *buffer, size_t size);
 
-typedef int (*fr_bio_callback_t)(fr_bio_t *bio); /* activate / shutdown callbacks */
+typedef int (*fr_bio_io_t)(fr_bio_t *bio); /* activate / shutdown callbacks */
+
+typedef void (*fr_bio_callback_t)(fr_bio_t *bio); /* activate / shutdown callbacks */
 
 typedef struct {
-	fr_bio_callback_t	activate;
-	fr_bio_callback_t	shutdown;
+	fr_bio_callback_t	activate;		//!< called when the BIO is ready to be used
+	fr_bio_callback_t	shutdown;		//!< called when the BIO is being shut down
+	fr_bio_callback_t	eof;			//!< called when the BIO is at EOF
+	fr_bio_callback_t	failed;			//!< called when the BIO fails
 
-	fr_bio_callback_t	read_blocked;
-	fr_bio_callback_t	write_blocked;
+	fr_bio_io_t		read_blocked;
+	fr_bio_io_t		write_blocked;
 
-	fr_bio_callback_t	read_resume;		//!< "unblocked" is too similar to "blocked"
-	fr_bio_callback_t	write_resume;
+	fr_bio_io_t		read_resume;		//!< "unblocked" is too similar to "blocked"
+	fr_bio_io_t		write_resume;
 } fr_bio_cb_funcs_t;
 
 /** Accept a new connection on a bio
@@ -141,8 +143,7 @@ static inline CC_HINT(nonnull) fr_bio_t *fr_bio_next(fr_bio_t *bio)
  *  @param size		amount of data to read.
  *  @return
  *	- <0 for error.  The return code will be fr_bio_error(ERROR_NAME)
- *	- 0 for "did not read any data".  Note that EOF is an error return.
- *	- >0 for amount of data read.
+ *	- 0 for "did not read any data".  EOF is a separate signal.
  */
 static inline ssize_t CC_HINT(nonnull(1,3)) fr_bio_read(fr_bio_t *bio, void *packet_ctx, void *buffer, size_t size)
 {

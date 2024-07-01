@@ -36,37 +36,27 @@ static sql_rcode_t sql_socket_init(rlm_sql_handle_t *handle, UNUSED rlm_sql_conf
 	return 0;
 }
 
-static sql_rcode_t sql_query(UNUSED rlm_sql_handle_t * handle,
-			     UNUSED rlm_sql_config_t const *config, UNUSED char const *query)
+static unlang_action_t sql_query(rlm_rcode_t *p_result, UNUSED int *priority, UNUSED request_t *request, void *uctx)
+{
+	fr_sql_query_t		*query_ctx = talloc_get_type_abort(uctx, fr_sql_query_t);
+	query_ctx->rcode = RLM_SQL_OK;
+	RETURN_MODULE_OK;
+}
+
+static int sql_num_rows(UNUSED fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
 	return 0;
 }
 
-static int sql_num_fields(UNUSED rlm_sql_handle_t * handle, UNUSED rlm_sql_config_t const *config)
+static unlang_action_t sql_fetch_row(rlm_rcode_t *p_result, UNUSED int *priority, UNUSED request_t *request, void *uctx)
 {
-	return 0;
+	fr_sql_query_t	*query_ctx = talloc_get_type_abort(uctx, fr_sql_query_t);
+	query_ctx->row = NULL;
+	query_ctx->rcode = RLM_SQL_NO_MORE_ROWS;
+	RETURN_MODULE_OK;
 }
 
-static sql_rcode_t sql_select_query(UNUSED rlm_sql_handle_t *handle,
-				    UNUSED rlm_sql_config_t const *config, UNUSED char const *query)
-{
-	return 0;
-}
-
-static int sql_num_rows(UNUSED rlm_sql_handle_t * handle, UNUSED rlm_sql_config_t const *config)
-{
-	return 0;
-}
-
-static sql_rcode_t sql_fetch_row(rlm_sql_row_t *out, UNUSED rlm_sql_handle_t *handle,
-				 UNUSED rlm_sql_config_t const *config)
-{
-	*out = NULL;
-
-	return RLM_SQL_NO_MORE_ROWS;
-}
-
-static sql_rcode_t sql_free_result(UNUSED rlm_sql_handle_t * handle, UNUSED rlm_sql_config_t const *config)
+static sql_rcode_t sql_free_result(UNUSED fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
 	return 0;
 }
@@ -75,22 +65,17 @@ static sql_rcode_t sql_free_result(UNUSED rlm_sql_handle_t * handle, UNUSED rlm_
  *
  */
 static size_t sql_error(UNUSED TALLOC_CTX *ctx, UNUSED sql_log_entry_t out[], UNUSED size_t outlen,
-			UNUSED rlm_sql_handle_t *handle, UNUSED rlm_sql_config_t const *config)
+			UNUSED fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
 	return 0;
 }
 
-static sql_rcode_t sql_finish_query(UNUSED rlm_sql_handle_t * handle, UNUSED rlm_sql_config_t const *config)
+static sql_rcode_t sql_finish_query(UNUSED fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
 	return 0;
 }
 
-static sql_rcode_t sql_finish_select_query(UNUSED rlm_sql_handle_t * handle, UNUSED rlm_sql_config_t const *config)
-{
-	return 0;
-}
-
-static int sql_affected_rows(UNUSED rlm_sql_handle_t * handle, UNUSED rlm_sql_config_t const *config)
+static int sql_affected_rows(UNUSED fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
 	return 1;
 }
@@ -104,13 +89,12 @@ rlm_sql_driver_t rlm_sql_null = {
 	},
 	.sql_socket_init		= sql_socket_init,
 	.sql_query			= sql_query,
-	.sql_select_query		= sql_select_query,
-	.sql_num_fields			= sql_num_fields,
+	.sql_select_query		= sql_query,
 	.sql_num_rows			= sql_num_rows,
 	.sql_fetch_row			= sql_fetch_row,
 	.sql_free_result		= sql_free_result,
 	.sql_error			= sql_error,
 	.sql_finish_query		= sql_finish_query,
-	.sql_finish_select_query	= sql_finish_select_query,
+	.sql_finish_select_query	= sql_finish_query,
 	.sql_affected_rows		= sql_affected_rows
 };

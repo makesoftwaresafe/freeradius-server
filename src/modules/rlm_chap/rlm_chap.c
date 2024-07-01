@@ -361,7 +361,7 @@ static int mod_bootstrap(module_inst_ctx_t const *mctx)
 {
 	xlat_t	*xlat;
 
-	if (unlikely((xlat = xlat_func_register_module(mctx->mi->boot, mctx, "password", xlat_func_chap_password,
+	if (unlikely((xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, "password", xlat_func_chap_password,
 						       FR_TYPE_OCTETS)) == NULL)) return -1;
 	xlat_func_args_set(xlat, xlat_func_chap_password_args);
 	xlat_func_call_env_set(xlat, &chap_xlat_method_env);
@@ -388,9 +388,11 @@ module_rlm_t rlm_chap = {
 		.config		= module_config,
 		.instantiate	= mod_instantiate
 	},
-	.bindings = (module_method_binding_t[]){
-		{ .section = SECTION_NAME("authenticate", CF_IDENT_ANY), .method = mod_authenticate, .method_env = &chap_auth_method_env },
-		{ .section = SECTION_NAME("recv", "access-request"), .method = mod_authorize, .method_env = &chap_autz_method_env },
-		MODULE_BINDING_TERMINATOR
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			{ .section = SECTION_NAME("authenticate", CF_IDENT_ANY), .method = mod_authenticate, .method_env = &chap_auth_method_env },
+			{ .section = SECTION_NAME("recv", "Access-Request"), .method = mod_authorize, .method_env = &chap_autz_method_env },
+			MODULE_BINDING_TERMINATOR
+		}
 	}
 };

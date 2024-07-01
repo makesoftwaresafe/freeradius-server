@@ -71,7 +71,7 @@ typedef struct {
  *
  */
 typedef struct {
-	ldap_memberof_xlat_ctx_t	*xlat_ctx;		//!< Xlat context being evaluated.
+	ldap_group_xlat_ctx_t	*xlat_ctx;		//!< Xlat context being evaluated.
 	char const			*attrs[2];		//!< For retrieving the group name.
 	struct berval			**values;		//!< Values of the membership attribute to check.
 	int				count;			//!< How many entries there are in values.
@@ -94,7 +94,7 @@ static void ldap_group_userobj_cancel(UNUSED request_t *request, UNUSED fr_signa
 	 */
 	if (!group_ctx->query || !(group_ctx->query->treq)) return;
 
-	fr_trunk_request_signal_cancel(group_ctx->query->treq);
+	trunk_request_signal_cancel(group_ctx->query->treq);
 }
 
 /** Convert multiple group names into a DNs
@@ -600,7 +600,7 @@ static void ldap_group_groupobj_cancel(UNUSED request_t *request, UNUSED fr_sign
 	 */
 	if (!group_ctx->query || !group_ctx->query->treq) return;
 
-	fr_trunk_request_signal_cancel(group_ctx->query->treq);
+	trunk_request_signal_cancel(group_ctx->query->treq);
 }
 
 /** Process the results of a group object lookup.
@@ -742,7 +742,7 @@ static unlang_action_t ldap_check_groupobj_resume(rlm_rcode_t *p_result, UNUSED 
 						      void *uctx)
 {
 	ldap_group_groupobj_ctx_t	*group_ctx = talloc_get_type_abort(uctx, ldap_group_groupobj_ctx_t);
-	ldap_memberof_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(group_ctx->uctx, ldap_memberof_xlat_ctx_t);
+	ldap_group_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(group_ctx->uctx, ldap_group_xlat_ctx_t);
 	fr_ldap_query_t			*query = group_ctx->query;
 	rlm_rcode_t			rcode = RLM_MODULE_OK;
 
@@ -784,7 +784,7 @@ static unlang_action_t ldap_check_groupobj_resume(rlm_rcode_t *p_result, UNUSED 
  * @param xlat_ctx	xlat context being processed.
  */
 unlang_action_t rlm_ldap_check_groupobj_dynamic(rlm_rcode_t *p_result, request_t *request,
-						ldap_memberof_xlat_ctx_t *xlat_ctx)
+						ldap_group_xlat_ctx_t *xlat_ctx)
 {
 	rlm_ldap_t const		*inst = xlat_ctx->inst;
 	ldap_group_groupobj_ctx_t	*group_ctx;
@@ -858,7 +858,7 @@ unlang_action_t rlm_ldap_check_groupobj_dynamic(rlm_rcode_t *p_result, request_t
 static unlang_action_t ldap_dn2name_start (rlm_rcode_t *p_result, UNUSED int *priority, request_t *request, void *uctx)
 {
 	ldap_group_userobj_dyn_ctx_t	*group_ctx = talloc_get_type_abort(uctx, ldap_group_userobj_dyn_ctx_t);
-	ldap_memberof_xlat_ctx_t	*xlat_ctx = group_ctx->xlat_ctx;
+	ldap_group_xlat_ctx_t	*xlat_ctx = group_ctx->xlat_ctx;
 	rlm_ldap_t const		*inst = xlat_ctx->inst;
 
 	if (!inst->group.obj_name_attr) {
@@ -882,7 +882,7 @@ static void ldap_dn2name_cancel(UNUSED request_t *request, UNUSED fr_signal_t ac
 
 	if (!group_ctx->query || !group_ctx->query->treq) return;
 
-	fr_trunk_request_signal_cancel(group_ctx->query->treq);
+	trunk_request_signal_cancel(group_ctx->query->treq);
 }
 
 /** Initiate a user lookup to check membership.
@@ -894,7 +894,7 @@ static unlang_action_t ldap_check_userobj_start(UNUSED rlm_rcode_t *p_result, UN
 						request_t *request, void *uctx)
 {
 	ldap_group_userobj_dyn_ctx_t	*group_ctx = talloc_get_type_abort(uctx, ldap_group_userobj_dyn_ctx_t);
-	ldap_memberof_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(group_ctx->xlat_ctx, ldap_memberof_xlat_ctx_t);
+	ldap_group_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(group_ctx->xlat_ctx, ldap_group_xlat_ctx_t);
 
 	return fr_ldap_trunk_search(xlat_ctx, &xlat_ctx->query, request, xlat_ctx->ttrunk, xlat_ctx->dn,
 				    LDAP_SCOPE_BASE, NULL, xlat_ctx->attrs, NULL, NULL);
@@ -907,7 +907,7 @@ static unlang_action_t ldap_check_userobj_resume(rlm_rcode_t *p_result, UNUSED i
 						 request_t *request, void *uctx)
 {
 	ldap_group_userobj_dyn_ctx_t	*group_ctx = talloc_get_type_abort(uctx, ldap_group_userobj_dyn_ctx_t);
-	ldap_memberof_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(group_ctx->xlat_ctx, ldap_memberof_xlat_ctx_t);
+	ldap_group_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(group_ctx->xlat_ctx, ldap_group_xlat_ctx_t);
 	rlm_ldap_t const		*inst = xlat_ctx->inst;
 	fr_ldap_query_t			*query = xlat_ctx->query;
 	LDAPMessage			*entry;
@@ -1115,7 +1115,7 @@ static int userobj_dyn_free(ldap_group_userobj_dyn_ctx_t *group_ctx)
  * @param[in] xlat_ctx		Context of the xlat being evaluated.
  */
 unlang_action_t rlm_ldap_check_userobj_dynamic(rlm_rcode_t *p_result, request_t *request,
-					       ldap_memberof_xlat_ctx_t *xlat_ctx)
+					       ldap_group_xlat_ctx_t *xlat_ctx)
 {
 	rlm_ldap_t const		*inst = xlat_ctx->inst;
 	ldap_group_userobj_dyn_ctx_t	*group_ctx;

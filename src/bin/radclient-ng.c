@@ -687,7 +687,7 @@ static int radclient_init(TALLOC_CTX *ctx, rc_file_pair_t *files)
 		 *	Fill in the packet header from attributes, and then
 		 *	re-realize the attributes.
 		 */
-		fr_packet_pairs_to_packet(request->packet, &request->request_pairs);
+		fr_packet_net_from_pairs(request->packet, &request->request_pairs);
 
 		/*
 		 *	Default to the filename
@@ -1098,10 +1098,33 @@ static int client_bio_write_resume(fr_bio_packet_t *bio)
 }
 
 
-static NEVER_RETURNS void client_error(UNUSED fr_event_list_t *el, UNUSED int fd, UNUSED int flags,
-				       int fd_errno, UNUSED void *uctx)
+static NEVER_RETURNS void client_bio_failed(fr_bio_packet_t *bio)
 {
+	ERROR("Failed connecting to server");
+
+	/*
+	 *	Cleanly close the BIO, so that we exercise the shutdown path.
+	 */
+	fr_assert(bio == client_bio);
+	TALLOC_FREE(client_bio);
+
+	fr_exit_now(1);
+}
+
+
+static NEVER_RETURNS void client_error(UNUSED fr_event_list_t *el, UNUSED int fd, UNUSED int flags,
+				       int fd_errno, void *uctx)
+{
+	fr_bio_packet_t *client = uctx;
+
 	ERROR("Failed in connection - %s", fr_syserror(fd_errno));
+
+	/*
+	 *	Cleanly close the BIO, so that we exercise the shutdown path.
+	 */
+	fr_assert(client == client_bio);
+	TALLOC_FREE(client_bio);
+
 	fr_exit_now(1);
 }
 
@@ -1116,7 +1139,7 @@ static void client_read(fr_event_list_t *el, int fd, UNUSED int flags, void *uct
 	fr_pair_list_init(&reply_pairs);
 
 	/*
-	 *	@todo list_ctx is ignored
+	 *	Read one packet.
 	 */
 	rcode = fr_bio_packet_read(client, (void **) &request, &reply, client, &reply_pairs);
 	if (rcode < 0) {
@@ -1255,7 +1278,7 @@ static void client_write(fr_event_list_t *el, int fd, UNUSED int flags, void *uc
 	}
 }
 
-static int client_bio_activate(fr_bio_packet_t *client)
+static void  client_bio_activate(fr_bio_packet_t *client)
 {
 	fr_radius_client_bio_info_t const *info;
 
@@ -1266,8 +1289,6 @@ static int client_bio_activate(fr_bio_packet_t *client)
 		fr_perror("radclient");
 		fr_exit_now(1);
 	}
-
-	return 0;
 }
 
 
@@ -1727,6 +1748,7 @@ int main(int argc, char **argv)
 	 */
 	client_config.packet_cb_cfg = (fr_bio_packet_cb_funcs_t) {
 		.activate	= client_bio_activate,
+		.failed		= client_bio_failed,
 
 		.write_blocked	= client_bio_write_pause,
 		.write_resume	= client_bio_write_resume,

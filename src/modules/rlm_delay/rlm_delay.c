@@ -264,7 +264,7 @@ static int mod_bootstrap(module_inst_ctx_t const *mctx)
 {
 	xlat_t		*xlat;
 
-	xlat = xlat_func_register_module(mctx->mi->boot, mctx, NULL, xlat_delay, FR_TYPE_TIME_DELTA);
+	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, NULL, xlat_delay, FR_TYPE_TIME_DELTA);
 	xlat_func_args_set(xlat, xlat_delay_args);
 	return 0;
 }
@@ -279,8 +279,10 @@ module_rlm_t rlm_delay = {
 		.config		= module_config,
 		.bootstrap	= mod_bootstrap
 	},
-	.bindings = (module_method_binding_t[]){
-		{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY),	.method = mod_delay },
-		MODULE_BINDING_TERMINATOR
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_delay },
+			MODULE_BINDING_TERMINATOR
+		}
 	}
 };

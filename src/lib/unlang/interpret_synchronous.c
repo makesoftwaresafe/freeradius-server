@@ -52,18 +52,18 @@ static void _request_done_external(request_t *request, UNUSED rlm_rcode_t rcode,
 {
 	if (request->master_state != REQUEST_STOP_PROCESSING) {
 		/*
-		 *	If we're running a real request, then the final
-		 *	indentation MUST be zero.  Otherwise we skipped
-		 *	something!
+		 *	Previously, there was a check to ensure that external requests
+		 *	had an indentation level of zero, but this does not apply
+		 *	if the request was passed in to the synchronous interpreter
+		 *	as its base indentation level may not have been zero to begin
+		 *	with.
 		 *
-		 *	Also check that the request is NOT marked as
-		 *	"yielded", but is in fact done.
+		 *	Also check that the request is NOT marked as "yielded", but
+		 *	is in fact done.
 		 *
 		 *	@todo - check that the stack is at frame 0, otherwise
 		 *	more things have gone wrong.
 		 */
-		fr_assert_msg(request->parent || (request->log.indent.unlang == 0),
-			      "Request %s bad log indentation - expected 0 got %u", request->name, request->log.indent.unlang);
 		fr_assert_msg(!unlang_interpret_is_resumable(request),
 			      "Request %s is marked as yielded at end of processing", request->name);
 	}
@@ -242,14 +242,14 @@ rlm_rcode_t unlang_interpret_synchronous(fr_event_list_t *el, request_t *request
 		 *	failure, all kinds of bad things happen.  Oh
 		 *	well.
 		 */
-		DEBUG3("Gathering events - %s", dont_wait_for_event ? "Will not wait" : "will wait");
+		DEBUG4("Gathering events - %s", dont_wait_for_event ? "Will not wait" : "will wait");
 		num_events = fr_event_corral(el, fr_time(), !dont_wait_for_event);
 		if (num_events < 0) {
 			RPERROR("fr_event_corral");
 			break;
 		}
 
-		DEBUG3("%u event(s) pending%s",
+		DEBUG4("%u event(s) pending%s",
 		       num_events == -1 ? 0 : num_events, num_events == -1 ? " - event loop exiting" : "");
 
 		/*
@@ -275,7 +275,7 @@ rlm_rcode_t unlang_interpret_synchronous(fr_event_list_t *el, request_t *request
 		 */
 		sub_request = fr_heap_pop(&intps->runnable);
 		if (!sub_request) {
-			DEBUG3("No pending requests (%u yielded)", intps->yielded);
+			DEBUG4("No pending requests (%u yielded)", intps->yielded);
 			continue;
 		}
 

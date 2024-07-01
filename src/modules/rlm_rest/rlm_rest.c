@@ -1363,7 +1363,7 @@ static int mod_bootstrap(module_inst_ctx_t const *mctx)
 {
 	xlat_t	*xlat;
 
-	xlat = xlat_func_register_module(mctx->mi->boot, mctx, NULL, rest_xlat, FR_TYPE_STRING);
+	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, NULL, rest_xlat, FR_TYPE_STRING);
 	xlat_func_args_set(xlat, rest_xlat_args);
 	xlat_func_call_env_set(xlat, &rest_call_env_xlat);
 
@@ -1418,17 +1418,19 @@ module_rlm_t rlm_rest = {
 		.thread_instantiate	= mod_thread_instantiate,
 		.thread_detach		= mod_thread_detach
 	},
-	.bindings = (module_method_binding_t[]){
-		/*
-		 *	Hack to support old configurations
-		 */
-		{ .section = SECTION_NAME("authorize", CF_IDENT_ANY),		.method = mod_authorize,	.method_env = &rest_call_env_authorize		},
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			/*
+			 *	Hack to support old configurations
+			 */
+			{ .section = SECTION_NAME("authorize", CF_IDENT_ANY), .method = mod_authorize, .method_env = &rest_call_env_authorize },
 
-		{ .section = SECTION_NAME("recv", "accounting-request"),	.method = mod_accounting,	.method_env = &rest_call_env_accounting		},
-		{ .section = SECTION_NAME("recv", CF_IDENT_ANY),		.method = mod_authorize,	.method_env = &rest_call_env_authorize		},
-		{ .section = SECTION_NAME("accounting", CF_IDENT_ANY),		.method = mod_accounting,	.method_env = &rest_call_env_accounting		},
-		{ .section = SECTION_NAME("authenticate", CF_IDENT_ANY),		.method = mod_authenticate,	.method_env = &rest_call_env_authenticate 	},
-		{ .section = SECTION_NAME("send", CF_IDENT_ANY),		.method = mod_post_auth,	.method_env = &rest_call_env_post_auth		},
-		MODULE_BINDING_TERMINATOR
+			{ .section = SECTION_NAME("recv", "accounting-request"), .method = mod_accounting, .method_env = &rest_call_env_accounting },
+			{ .section = SECTION_NAME("recv", CF_IDENT_ANY), .method = mod_authorize, .method_env = &rest_call_env_authorize },
+			{ .section = SECTION_NAME("accounting", CF_IDENT_ANY), .method = mod_accounting, .method_env = &rest_call_env_accounting },
+			{ .section = SECTION_NAME("authenticate", CF_IDENT_ANY), .method = mod_authenticate, .method_env = &rest_call_env_authenticate },
+			{ .section = SECTION_NAME("send", CF_IDENT_ANY), .method = mod_post_auth, .method_env = &rest_call_env_post_auth },
+			MODULE_BINDING_TERMINATOR
+		}
 	}
 };

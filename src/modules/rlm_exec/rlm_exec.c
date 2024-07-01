@@ -506,7 +506,7 @@ static int mod_bootstrap(module_inst_ctx_t const *mctx)
 {
 	xlat_t			*xlat;
 
-	xlat = xlat_func_register_module(mctx->mi->boot, mctx, NULL, exec_xlat_oneshot, FR_TYPE_STRING);
+	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, NULL, exec_xlat_oneshot, FR_TYPE_STRING);
 	xlat_func_args_set(xlat, exec_xlat_args);
 
 	return 0;
@@ -531,8 +531,10 @@ module_rlm_t rlm_exec = {
 		.bootstrap	= mod_bootstrap,
 		.instantiate	= mob_instantiate
 	},
-        .bindings = (module_method_binding_t[]){
-                { .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_exec_dispatch_oneshot, .method_env = &exec_method_env },
-                MODULE_BINDING_TERMINATOR
-        }
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_exec_dispatch_oneshot, .method_env = &exec_method_env },
+			MODULE_BINDING_TERMINATOR
+		}
+	}
 };

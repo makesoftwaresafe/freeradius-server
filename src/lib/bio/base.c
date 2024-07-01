@@ -43,14 +43,6 @@ int fr_bio_destructor(fr_bio_t *bio)
 }
 #endif
 
-/** Always returns EOF on fr_bio_read()
- *
- */
-ssize_t fr_bio_eof_read(UNUSED fr_bio_t *bio, UNUSED void *packet_ctx, UNUSED void *buffer, UNUSED size_t size)
-{
-	return fr_bio_error(EOF);
-}
-
 /** Internal bio function which just reads from the "next" bio.
  *
  *  It is mainly used when the current bio needs to modify the write
@@ -69,8 +61,8 @@ ssize_t fr_bio_next_read(fr_bio_t *bio, void *packet_ctx, void *buffer, size_t s
 
 	if (rcode == fr_bio_error(IO_WOULD_BLOCK)) return rcode;
 
-	bio->read = fr_bio_eof_read;
-	bio->write = fr_bio_null_write;
+	bio->read = fr_bio_fail_read;
+	bio->write = fr_bio_fail_write;
 	return rcode;
 }
 
@@ -92,8 +84,8 @@ ssize_t fr_bio_next_write(fr_bio_t *bio, void *packet_ctx, void const *buffer, s
 
 	if (rcode == fr_bio_error(IO_WOULD_BLOCK)) return rcode;
 
-	bio->read = fr_bio_eof_read;
-	bio->write = fr_bio_null_write;
+	bio->read = fr_bio_fail_read;
+	bio->write = fr_bio_fail_write;
 	return rcode;
 }
 
@@ -127,8 +119,8 @@ int fr_bio_free(fr_bio_t *bio)
 		next->entry.prev = NULL;
 		if (fr_bio_free(next) < 0) {
 			next->entry.prev = &bio->entry;
-			bio->read = fr_bio_eof_read;
-			bio->write = fr_bio_null_write;
+			bio->read = fr_bio_fail_read;
+			bio->write = fr_bio_fail_write;
 			return -1;
 		}
 
@@ -166,7 +158,6 @@ int fr_bio_shutdown(fr_bio_t *bio)
 	 *	Walk back up the chain, calling the shutdown functions.
 	 */
 	do {
-		int rcode;
 		fr_bio_common_t *my = (fr_bio_common_t *) last;
 
 		/*
@@ -174,7 +165,7 @@ int fr_bio_shutdown(fr_bio_t *bio)
 		 *
 		 *	Then set it to NULL so that it doesn't get called again on talloc cleanups.
 		 */
-		if (my->cb.shutdown && ((rcode = my->cb.shutdown(last)) < 0)) return rcode;
+		if (my->cb.shutdown) my->cb.shutdown(last);
 
 		my->cb.shutdown = NULL;
 
@@ -234,4 +225,32 @@ void fr_bio_cb_set(fr_bio_t *bio, fr_bio_cb_funcs_t const *cb)
 	if (!cb) cb = &(fr_bio_cb_funcs_t) { };
 
 	my->cb = *cb;
+}
+
+/** Internal BIO function to run EOF callbacks.
+ *
+ *  The EOF callbacks are _internal_, and tell the various BIOs that there is nothing more to read from the
+ *  BIO.
+ *
+ *  @todo - do we need to have separate _write_ EOF?  Likely not.
+ */
+void fr_bio_eof(fr_bio_t *bio)
+{
+	fr_bio_t *x = bio;
+
+	/*
+	 *	Start from the first BIO.
+	 */
+	while (fr_bio_prev(x) != NULL) x = fr_bio_prev(x);
+
+	/*
+	 *	Shut each one down, including the one which called us.
+	 */
+	while (x) {
+		fr_bio_common_t *this = (fr_bio_common_t *) x;
+
+		if (this->priv_cb.eof) this->priv_cb.eof((fr_bio_t *) this);
+
+		x = fr_bio_next(x);
+	}
 }

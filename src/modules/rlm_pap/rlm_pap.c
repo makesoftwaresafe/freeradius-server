@@ -573,6 +573,16 @@ static inline CC_HINT(nonnull) unlang_action_t pap_auth_pbkdf2_parse(rlm_rcode_t
 		char iterations_buff[sizeof("4294967295") + 1];
 		char *qq;
 
+		/*
+		 *	While passwords come from "trusted" sources, we don't trust them too much!
+		 */
+		if ((size_t) (q - p) >= sizeof(iterations_buff)) {
+			REMARKER((char const *) p, q - p,
+				 "Password.PBKDF2 iterations field is too large");
+
+			goto finish;
+		}
+
 		strlcpy(iterations_buff, (char const *)p, (q - p) + 1);
 
 		iterations = strtoul(iterations_buff, &qq, 10);
@@ -1063,14 +1073,16 @@ module_rlm_t rlm_pap = {
 		.config		= module_config,
 		.instantiate	= mod_instantiate
 	},
-	.bindings = (module_method_binding_t[]){
-		/*
-		 *	Hack to support old configurations
-		 */
-		{ .section = SECTION_NAME("authenticate", CF_IDENT_ANY), .method = mod_authenticate, .method_env = &pap_method_env },
-		{ .section = SECTION_NAME("authorize", CF_IDENT_ANY), .method = mod_authorize, .method_env = &pap_method_env },
-		{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_authorize, .method_env = &pap_method_env },
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			/*
+			 *	Hack to support old configurations
+			 */
+			{ .section = SECTION_NAME("authenticate", CF_IDENT_ANY), .method = mod_authenticate, .method_env = &pap_method_env },
+			{ .section = SECTION_NAME("authorize", CF_IDENT_ANY), .method = mod_authorize, .method_env = &pap_method_env },
+			{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_authorize, .method_env = &pap_method_env },
 
-		MODULE_BINDING_TERMINATOR
+			MODULE_BINDING_TERMINATOR
+		}
 	}
 };

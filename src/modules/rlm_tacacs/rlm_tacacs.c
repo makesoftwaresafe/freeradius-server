@@ -61,7 +61,7 @@ static conf_parser_t const module_config[] = {
 
 	{ FR_CONF_OFFSET("revive_interval", rlm_tacacs_t, revive_interval) },
 
-	{ FR_CONF_OFFSET_SUBSECTION("pool", 0, rlm_tacacs_t, trunk_conf, fr_trunk_config ) },
+	{ FR_CONF_OFFSET_SUBSECTION("pool", 0, rlm_tacacs_t, trunk_conf, trunk_config ) },
 
 	{ FR_CONF_OFFSET_SUBSECTION("retry", 0, rlm_tacacs_t, retry, retry_config ) },
 
@@ -264,8 +264,10 @@ module_rlm_t rlm_tacacs = {
 
 		.instantiate	= mod_instantiate,
 	},
-	.bindings = (module_method_binding_t[]){
-		{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_process },
-		MODULE_BINDING_TERMINATOR
-	},
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_process },
+			MODULE_BINDING_TERMINATOR
+		}
+	}
 };

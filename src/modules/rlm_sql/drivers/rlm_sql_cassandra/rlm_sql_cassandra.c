@@ -432,16 +432,17 @@ static sql_rcode_t sql_socket_init(rlm_sql_handle_t *handle, rlm_sql_config_t co
 	return RLM_SQL_OK;
 }
 
-static sql_rcode_t sql_query(rlm_sql_handle_t *handle, UNUSED rlm_sql_config_t const *config, char const *query)
+static unlang_action_t sql_query(rlm_rcode_t *p_result, UNUSED int *priority, UNUSED request_t *request, void *uctx)
 {
-	rlm_sql_cassandra_conn_t	*conn = handle->conn;
-	rlm_sql_cassandra_t		*inst = talloc_get_type_abort(handle->inst->driver_submodule->data, rlm_sql_cassandra_t);
+	fr_sql_query_t			*query_ctx = talloc_get_type_abort(uctx, fr_sql_query_t);
+	rlm_sql_cassandra_conn_t	*conn = query_ctx->handle->conn;
+	rlm_sql_cassandra_t		*inst = talloc_get_type_abort(query_ctx->handle->inst->driver_submodule->data, rlm_sql_cassandra_t);
 
 	CassStatement			*statement;
 	CassFuture			*future;
 	CassError			ret;
 
-	statement = cass_statement_new_n(query, talloc_array_length(query) - 1, 0);
+	statement = cass_statement_new_n(query_ctx->query_str, talloc_array_length(query_ctx->query_str) - 1, 0);
 	if (inst->consistency_str) cass_statement_set_consistency(statement, inst->consistency);
 
 	future = cass_session_execute(inst->session, statement);
@@ -459,44 +460,40 @@ static sql_rcode_t sql_query(rlm_sql_handle_t *handle, UNUSED rlm_sql_config_t c
 		switch (ret) {
 		case CASS_ERROR_SERVER_SYNTAX_ERROR:
 		case CASS_ERROR_SERVER_INVALID_QUERY:
-			return RLM_SQL_QUERY_INVALID;
+			query_ctx->rcode = RLM_SQL_QUERY_INVALID;
+			RETURN_MODULE_INVALID;
 
 		default:
-			return RLM_SQL_ERROR;
+			query_ctx->rcode = RLM_SQL_ERROR;
+			RETURN_MODULE_FAIL;
 		}
 	}
 
 	conn->result = cass_future_get_result(future);
 	cass_future_free(future);
 
-	return RLM_SQL_OK;
+	query_ctx->rcode = RLM_SQL_OK;
+	RETURN_MODULE_OK;
 }
 
-static int sql_num_fields(rlm_sql_handle_t *handle, UNUSED rlm_sql_config_t const *config)
+static int sql_num_rows(fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
-	rlm_sql_cassandra_conn_t *conn = handle->conn;
-
-	return conn->result ? cass_result_column_count(conn->result) : 0;
-}
-
-static int sql_num_rows(rlm_sql_handle_t *handle, UNUSED rlm_sql_config_t const *config)
-{
-	rlm_sql_cassandra_conn_t *conn = handle->conn;
+	rlm_sql_cassandra_conn_t *conn = query_ctx->handle->conn;
 
 	return conn->result ? cass_result_row_count(conn->result) : 0;
 }
 
-static sql_rcode_t sql_fields(char const **out[], rlm_sql_handle_t *handle, rlm_sql_config_t const *config)
+static sql_rcode_t sql_fields(char const **out[], fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
-	rlm_sql_cassandra_conn_t *conn = handle->conn;
+	rlm_sql_cassandra_conn_t *conn = query_ctx->handle->conn;
 
 	unsigned int	fields, i;
 	char const	**names;
 
-	fields = sql_num_fields(handle, config);
+	fields = conn->result ? cass_result_column_count(conn->result) : 0;
 	if (fields == 0) return RLM_SQL_ERROR;
 
-	MEM(names = talloc_array(handle, char const *, fields));
+	MEM(names = talloc_array(query_ctx, char const *, fields));
 
 	for (i = 0; i < fields; i++) {
 		const char *col_name;
@@ -514,10 +511,10 @@ static sql_rcode_t sql_fields(char const **out[], rlm_sql_handle_t *handle, rlm_
 	return RLM_SQL_OK;
 }
 
-static sql_rcode_t sql_fetch_row(rlm_sql_row_t *out, rlm_sql_handle_t *handle, rlm_sql_config_t const *config)
+static unlang_action_t sql_fetch_row(rlm_rcode_t *p_result, UNUSED int *priority, UNUSED request_t *request, void *uctx)
 {
-
-	rlm_sql_cassandra_conn_t 	*conn = handle->conn;
+	fr_sql_query_t			*query_ctx = talloc_get_type_abort(uctx, fr_sql_query_t);
+	rlm_sql_cassandra_conn_t 	*conn = query_ctx->handle->conn;
 	CassRow	const 			*cass_row;
 	int				fields, i;
 	char				**row;
@@ -532,30 +529,33 @@ do {\
 	}\
 	sql_set_last_error_printf(conn, "Failed to retrieve " _t " data at column %s (%d): %s", \
 				  _col_name, i, cass_error_desc(_ret));\
-	TALLOC_FREE(handle->row);\
-	return RLM_SQL_ERROR;\
+	TALLOC_FREE(query_ctx->row);\
+	query_ctx->rcode = RLM_SQL_ERROR;\
+	RETURN_MODULE_FAIL;\
 } while(0)
 
-	if (!conn->result) return RLM_SQL_OK;				/* no result */
-
-	*out = NULL;
+	query_ctx->rcode = RLM_SQL_OK;
+	if (!conn->result) RETURN_MODULE_OK;				/* no result */
 
 	/*
 	 *	Start of the result set, initialise the iterator.
 	 */
 	if (!conn->iterator) conn->iterator = cass_iterator_from_result(conn->result);
-	if (!conn->iterator) return RLM_SQL_OK;				/* no result */
+	if (!conn->iterator) RETURN_MODULE_OK;				/* no result */
 
-	if (!cass_iterator_next(conn->iterator)) return RLM_SQL_NO_MORE_ROWS;	/* no more rows */
+	if (!cass_iterator_next(conn->iterator)) {
+		query_ctx->rcode = RLM_SQL_NO_MORE_ROWS;		/* no more rows */
+		RETURN_MODULE_OK;
+	}
 
 	cass_row = cass_iterator_get_row(conn->iterator);		/* this shouldn't fail ? */
-	fields = sql_num_fields(handle, config);			/* get the number of fields... */
+	fields = cass_result_column_count(conn->result);		/* get the number of fields... */
 
 	/*
 	 *	Free the previous result (also gets called on finish_query)
 	 */
-	talloc_free(handle->row);
-	MEM(row = handle->row = talloc_zero_array(handle, char *, fields + 1));
+	talloc_free(query_ctx->row);
+	MEM(row = query_ctx->row = talloc_zero_array(query_ctx, char *, fields + 1));
 
 	for (i = 0; i < fields; i++) {
 		CassValue const	*value;
@@ -636,21 +636,21 @@ do {\
 			sql_set_last_error_printf(conn,
 						  "Failed to retrieve data at column %s (%d): Unsupported data type",
 						  col_name, i);
-			talloc_free(handle->row);
-			return RLM_SQL_ERROR;
+			talloc_free(query_ctx->row);
+			query_ctx->rcode = RLM_SQL_ERROR;
+			RETURN_MODULE_FAIL;
 		}
 		}
 	}
-	*out = row;
 
-	return RLM_SQL_OK;
+	RETURN_MODULE_OK;
 }
 
-static sql_rcode_t sql_free_result(rlm_sql_handle_t *handle, UNUSED rlm_sql_config_t const *config)
+static sql_rcode_t sql_free_result(fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
-	rlm_sql_cassandra_conn_t *conn = handle->conn;
+	rlm_sql_cassandra_conn_t *conn = query_ctx->handle->conn;
 
-	if (handle->row) TALLOC_FREE(handle->row);
+	if (query_ctx->row) TALLOC_FREE(query_ctx->row);
 
 	if (conn->iterator) {
 		cass_iterator_free(conn->iterator);
@@ -666,9 +666,9 @@ static sql_rcode_t sql_free_result(rlm_sql_handle_t *handle, UNUSED rlm_sql_conf
 }
 
 static size_t sql_error(UNUSED TALLOC_CTX *ctx, sql_log_entry_t out[], size_t outlen,
-			rlm_sql_handle_t *handle, UNUSED rlm_sql_config_t const *config)
+			fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
-	rlm_sql_cassandra_conn_t *conn = handle->conn;
+	rlm_sql_cassandra_conn_t *conn = query_ctx->handle->conn;
 
 	if (conn->last_error.msg && (outlen >= 1)) {
 		out[0].msg = conn->last_error.msg;
@@ -681,9 +681,9 @@ static size_t sql_error(UNUSED TALLOC_CTX *ctx, sql_log_entry_t out[], size_t ou
 	return 0;
 }
 
-static sql_rcode_t sql_finish_query(rlm_sql_handle_t *handle, rlm_sql_config_t const *config)
+static sql_rcode_t sql_finish_query(fr_sql_query_t *query_ctx, rlm_sql_config_t const *config)
 {
-	rlm_sql_cassandra_conn_t *conn = handle->conn;
+	rlm_sql_cassandra_conn_t *conn = query_ctx->handle->conn;
 
 	/*
 	 *	Clear our local log buffer, and free any messages which weren't
@@ -692,7 +692,7 @@ static sql_rcode_t sql_finish_query(rlm_sql_handle_t *handle, rlm_sql_config_t c
 	talloc_free_children(conn->log_ctx);
 	memset(&conn->last_error, 0, sizeof(conn->last_error));
 
-	return sql_free_result(handle, config);
+	return sql_free_result(query_ctx, config);
 }
 
 /*
@@ -702,7 +702,7 @@ static sql_rcode_t sql_finish_query(rlm_sql_handle_t *handle, rlm_sql_config_t c
  *	There's a good article on it here:
  *		http://planetcassandra.org/blog/how-to-do-an-upsert-in-cassandra/
  */
-static int sql_affected_rows(UNUSED rlm_sql_handle_t *handle, UNUSED rlm_sql_config_t const *config)
+static int sql_affected_rows(UNUSED fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
 	return 1;
 }
@@ -975,7 +975,6 @@ rlm_sql_driver_t rlm_sql_cassandra = {
 	.sql_socket_init		= sql_socket_init,
 	.sql_query			= sql_query,
 	.sql_select_query		= sql_query,
-	.sql_num_fields			= sql_num_fields,
 	.sql_num_rows			= sql_num_rows,
 	.sql_affected_rows		= sql_affected_rows,
 	.sql_fields			= sql_fields,

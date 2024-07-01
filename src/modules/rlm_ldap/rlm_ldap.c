@@ -77,9 +77,9 @@ typedef struct {
 	map_list_t	*profile_map;			//!< List of maps to apply to the profile.
 } ldap_xlat_profile_call_env_t;
 
-static int ldap_update_section_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci, char const *section_name1, char const *section_name2, void const *data, call_env_parser_t const *rule);
+static int ldap_update_section_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci, call_env_ctx_t const *cec, call_env_parser_t const *rule);
 
-static int ldap_group_filter_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci, UNUSED char const *section_name1, UNUSED char const *section_name2, void const *data, UNUSED call_env_parser_t const *rule);
+static int ldap_group_filter_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci, call_env_ctx_t const *cec, UNUSED call_env_parser_t const *rule);
 
 static const call_env_parser_t sasl_call_env[] = {
 	{ FR_CALL_ENV_OFFSET("mech", FR_TYPE_STRING, CALL_ENV_FLAG_NONE, ldap_auth_call_env_t, user_sasl_mech) },
@@ -175,9 +175,9 @@ static const conf_parser_t module_config[] = {
 
 	{ FR_CONF_POINTER("profile", 0, CONF_FLAG_SUBSECTION, NULL), .subcs = (void const *) profile_config },
 
-	{ FR_CONF_OFFSET_SUBSECTION("pool", 0, rlm_ldap_t, trunk_conf, fr_trunk_config ) },
+	{ FR_CONF_OFFSET_SUBSECTION("pool", 0, rlm_ldap_t, trunk_conf, trunk_config ) },
 
-	{ FR_CONF_OFFSET_SUBSECTION("bind_pool", 0, rlm_ldap_t, bind_trunk_conf, fr_trunk_config ) },
+	{ FR_CONF_OFFSET_SUBSECTION("bind_pool", 0, rlm_ldap_t, bind_trunk_conf, trunk_config ) },
 
 	CONF_PARSER_TERMINATOR
 };
@@ -531,7 +531,7 @@ static int ldap_uri_part_escape(fr_value_box_t *vb, UNUSED void *uctx)
 static void ldap_query_timeout(UNUSED fr_event_list_t *el, UNUSED fr_time_t now, void *uctx)
 {
 	fr_ldap_query_t		*query = talloc_get_type_abort(uctx, fr_ldap_query_t);
-	fr_trunk_request_t	*treq;
+	trunk_request_t	*treq;
 	request_t		*request;
 
 	/*
@@ -540,12 +540,12 @@ static void ldap_query_timeout(UNUSED fr_event_list_t *el, UNUSED fr_time_t now,
 	 */
 	if (!query->treq) return;
 
-	treq = talloc_get_type_abort(query->treq, fr_trunk_request_t);
+	treq = talloc_get_type_abort(query->treq, trunk_request_t);
 	request = treq->request;
 
 	ROPTIONAL(RERROR, ERROR, "Timeout waiting for LDAP query");
 
-	fr_trunk_request_signal_cancel(query->treq);
+	trunk_request_signal_cancel(query->treq);
 
 	query->ret = LDAP_RESULT_TIMEOUT;
 	unlang_interpret_mark_runnable(request);
@@ -609,7 +609,7 @@ static void ldap_xlat_signal(xlat_ctx_t const *xctx, request_t *request, UNUSED 
 
 	RDEBUG2("Forcefully cancelling pending LDAP query");
 
-	fr_trunk_request_signal_cancel(query->treq);
+	trunk_request_signal_cancel(query->treq);
 }
 
 /*
@@ -661,6 +661,76 @@ char *host_uri_canonify(request_t *request, LDAPURLDesc *url_parsed, fr_value_bo
 	return host;
 }
 
+/** Utility function for parsing LDAP URLs
+ *
+ * All LDAP xlat functions that work with LDAP URLs should call this function to parse the URL.
+ *
+ * @param[out] uri_parsed	LDAP URL parsed.  Must be freed with ldap_url_desc_free.
+ * @param[out] host_out		host name to use for the query.  Must be freed with ldap_mem_free
+ *				if free_host_out is true.
+ * @param[out] free_host_out	True if host_out should be freed.
+ * @param[in] request		Request being processed.
+ * @param[in] host_default	Default host to use if the URL does not specify a host.
+ * @param[in] uri_in		URI to parse.
+ * @return
+ *	- 0 on success.
+ *	- -1 on failure.
+ */
+static int ldap_xlat_uri_parse(LDAPURLDesc **uri_parsed, char **host_out, bool *free_host_out,
+			       request_t *request, char *host_default, fr_value_box_t *uri_in)
+{
+	fr_value_box_t	*uri;
+	int		ldap_url_ret;
+
+	*free_host_out = false;
+
+	if (fr_uri_escape_list(&uri_in->vb_group, ldap_uri_parts, NULL) < 0){
+		RPERROR("Failed to escape LDAP URI");
+	error:
+		*uri_parsed = NULL;
+		return -1;
+	}
+
+	/*
+	 *	Smush everything into the first URI box
+	 */
+	uri = fr_value_box_list_head(&uri_in->vb_group);
+
+	if (fr_value_box_list_concat_in_place(uri, uri, &uri_in->vb_group,
+					      FR_TYPE_STRING, FR_VALUE_BOX_LIST_FREE, true, SIZE_MAX) < 0) {
+		REDEBUG("Failed concattenating input");
+		goto error;
+	}
+
+	if (!ldap_is_ldap_url(uri->vb_strvalue)) {
+		REDEBUG("String passed does not look like an LDAP URL");
+		goto error;
+	}
+
+	ldap_url_ret = ldap_url_parse(uri->vb_strvalue, uri_parsed);
+	if (ldap_url_ret != LDAP_URL_SUCCESS){
+		RPEDEBUG("Parsing LDAP URL failed - %s", fr_ldap_url_err_to_str(ldap_url_ret));
+		goto error;
+	}
+
+	/*
+	 *	If the URL is <scheme>:/// the parsed host will be NULL - use config default
+	 */
+	if (!(*uri_parsed)->lud_host) {
+		*host_out = host_default;
+	} else {
+		*host_out = host_uri_canonify(request, *uri_parsed, uri);
+		if (unlikely(*host_out == NULL)) {
+			ldap_free_urldesc(*uri_parsed);
+			*uri_parsed = NULL;
+			return -1;
+		}
+		*free_host_out = true;
+	}
+
+	return 0;
+}
+
 /** Expand an LDAP URL into a query, and return a string result from that query.
  *
  * @ingroup xlat_functions
@@ -670,45 +740,18 @@ static xlat_action_t ldap_xlat(UNUSED TALLOC_CTX *ctx, UNUSED fr_dcursor_t *out,
 	 		       request_t *request, fr_value_box_list_t *in)
 {
 	fr_ldap_thread_t	*t = talloc_get_type_abort(xctx->mctx->thread, fr_ldap_thread_t);
-	fr_value_box_t		*uri_components, *uri;
-	char			*host_url, *host = NULL;
+	fr_value_box_t		*uri;
+	char			*host;
+	bool			free_host = false;
 	fr_ldap_config_t const	*handle_config = t->config;
 	fr_ldap_thread_trunk_t	*ttrunk;
 	fr_ldap_query_t		*query = NULL;
 
 	LDAPURLDesc		*ldap_url;
-	int			ldap_url_ret;
 
-	XLAT_ARGS(in, &uri_components);
+	XLAT_ARGS(in, &uri);
 
-	if (fr_uri_escape_list(&uri_components->vb_group, ldap_uri_parts, NULL) < 0){
-		RPERROR("Failed to escape LDAP URI");
-		return XLAT_ACTION_FAIL;
-	}
-
-	/*
-	 *	Smush everything into the first URI box
-	 */
-	uri = fr_value_box_list_head(&uri_components->vb_group);
-
-	if (fr_value_box_list_concat_in_place(uri, uri, &uri_components->vb_group,
-					      FR_TYPE_STRING, FR_VALUE_BOX_LIST_FREE, true, SIZE_MAX) < 0) {
-		REDEBUG("Failed concattenating input");
-		return XLAT_ACTION_FAIL;
-	}
-
-	if (!ldap_is_ldap_url(uri->vb_strvalue)) {
-		REDEBUG("String passed does not look like an LDAP URL");
-		return XLAT_ACTION_FAIL;
-	}
-
-	ldap_url_ret = ldap_url_parse(uri->vb_strvalue, &ldap_url);
-	if (ldap_url_ret != LDAP_URL_SUCCESS){
-		RPEDEBUG("Parsing LDAP URL failed - %s", fr_ldap_url_err_to_str(ldap_url_ret));
-	error:
-		ldap_free_urldesc(ldap_url);
-		return XLAT_ACTION_FAIL;
-	}
+	if (ldap_xlat_uri_parse(&ldap_url, &host, &free_host, request, handle_config->server, uri) < 0) return -1;
 
 	/*
 	 *	Nothing, empty string, "*" string, or got 2 things, die.
@@ -716,7 +759,7 @@ static xlat_action_t ldap_xlat(UNUSED TALLOC_CTX *ctx, UNUSED fr_dcursor_t *out,
 	if (!ldap_url->lud_attrs || !ldap_url->lud_attrs[0] || !*ldap_url->lud_attrs[0] ||
 	    (strcmp(ldap_url->lud_attrs[0], "*") == 0) || ldap_url->lud_attrs[1]) {
 		REDEBUG("Bad attributes list in LDAP URL. URL must specify exactly one attribute to retrieve");
-		goto error;
+		ldap_free_urldesc(ldap_url);
 	}
 
 	query = fr_ldap_search_alloc(unlang_interpret_frame_talloc_ctx(request),
@@ -731,6 +774,8 @@ static xlat_action_t ldap_xlat(UNUSED TALLOC_CTX *ctx, UNUSED fr_dcursor_t *out,
 		if (fr_ldap_parse_url_extensions(serverctrls, NUM_ELEMENTS(serverctrls),
 						 query->ldap_url->lud_exts) < 0) {
 			RPERROR("Parsing URL extensions failed");
+			if (free_host) ldap_memfree(host);
+
 		query_error:
 			talloc_free(query);
 			return XLAT_ACTION_FAIL;
@@ -744,26 +789,24 @@ static xlat_action_t ldap_xlat(UNUSED TALLOC_CTX *ctx, UNUSED fr_dcursor_t *out,
 	}
 
 	/*
-	 *	If the URL is <scheme>:/// the parsed host will be NULL - use config default
+	 *	Figure out what trunked connection we can use
+	 *	to communicate with the host.
+	 *
+	 *	If free_host is true, we must free the host
+	 *	after deciding on a trunk connection as it
+	 *	was allocated by host_uri_canonify.
 	 */
-	if (!ldap_url->lud_host) {
-		host_url = handle_config->server;
-	} else {
-		host_url = host = host_uri_canonify(request, ldap_url, uri);
-		if (unlikely(host_url == NULL)) goto query_error;
-	}
-
-	ttrunk = fr_thread_ldap_trunk_get(t, host_url, handle_config->admin_identity,
+	ttrunk = fr_thread_ldap_trunk_get(t, host, handle_config->admin_identity,
 					  handle_config->admin_password, request, handle_config);
-	if (host) ldap_memfree(host);
+	if (free_host) ldap_memfree(host);
 	if (!ttrunk) {
 		REDEBUG("Unable to get LDAP query for xlat");
 		goto query_error;
 	}
 
-	switch (fr_trunk_request_enqueue(&query->treq, ttrunk->trunk, request, query, NULL)) {
-	case FR_TRUNK_ENQUEUE_OK:
-	case FR_TRUNK_ENQUEUE_IN_BACKLOG:
+	switch (trunk_request_enqueue(&query->treq, ttrunk->trunk, request, query, NULL)) {
+	case TRUNK_ENQUEUE_OK:
+	case TRUNK_ENQUEUE_IN_BACKLOG:
 		break;
 
 	default:
@@ -774,7 +817,7 @@ static xlat_action_t ldap_xlat(UNUSED TALLOC_CTX *ctx, UNUSED fr_dcursor_t *out,
 	if (fr_event_timer_in(query, unlang_interpret_event_list(request), &query->ev, handle_config->res_timeout,
 			      ldap_query_timeout, query) < 0) {
 		REDEBUG("Unable to set timeout for LDAP query");
-		fr_trunk_request_signal_cancel(query->treq);
+		trunk_request_signal_cancel(query->treq);
 		goto query_error;
 	}
 
@@ -785,10 +828,10 @@ static xlat_action_t ldap_xlat(UNUSED TALLOC_CTX *ctx, UNUSED fr_dcursor_t *out,
  *
  * Called if the ldap membership xlat is used and the user DN is not already known
  */
-static unlang_action_t ldap_memberof_xlat_user_find(UNUSED rlm_rcode_t *p_result, UNUSED int *priority,
+static unlang_action_t ldap_group_xlat_user_find(UNUSED rlm_rcode_t *p_result, UNUSED int *priority,
 						    request_t *request, void *uctx)
 {
-	ldap_memberof_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(uctx, ldap_memberof_xlat_ctx_t);
+	ldap_group_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(uctx, ldap_group_xlat_ctx_t);
 
 	if (xlat_ctx->env_data->user_filter.type == FR_TYPE_STRING) xlat_ctx->filter = &xlat_ctx->env_data->user_filter;
 
@@ -801,17 +844,17 @@ static unlang_action_t ldap_memberof_xlat_user_find(UNUSED rlm_rcode_t *p_result
 /** Cancel an in-progress query for the LDAP group membership xlat
  *
  */
-static void ldap_memberof_xlat_cancel(UNUSED request_t *request, UNUSED fr_signal_t action, void *uctx)
+static void ldap_group_xlat_cancel(UNUSED request_t *request, UNUSED fr_signal_t action, void *uctx)
 {
-	ldap_memberof_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(uctx, ldap_memberof_xlat_ctx_t);
+	ldap_group_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(uctx, ldap_group_xlat_ctx_t);
 
 	if (!xlat_ctx->query || !xlat_ctx->query->treq) return;
 
-	fr_trunk_request_signal_cancel(xlat_ctx->query->treq);
+	trunk_request_signal_cancel(xlat_ctx->query->treq);
 }
 
 #define REPEAT_LDAP_MEMBEROF_XLAT_RESULTS \
-	if (unlang_function_repeat_set(request, ldap_memberof_xlat_results) < 0) do { \
+	if (unlang_function_repeat_set(request, ldap_group_xlat_results) < 0) do { \
 		rcode = RLM_MODULE_FAIL; \
 		goto finish; \
 	} while (0)
@@ -820,10 +863,10 @@ static void ldap_memberof_xlat_cancel(UNUSED request_t *request, UNUSED fr_signa
  *
  * This is called after each async lookup is completed
  */
-static unlang_action_t ldap_memberof_xlat_results(rlm_rcode_t *p_result, UNUSED int *priority,
+static unlang_action_t ldap_group_xlat_results(rlm_rcode_t *p_result, UNUSED int *priority,
 						  request_t *request, void *uctx)
 {
-	ldap_memberof_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(uctx, ldap_memberof_xlat_ctx_t);
+	ldap_group_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(uctx, ldap_group_xlat_ctx_t);
 	rlm_ldap_t const		*inst = xlat_ctx->inst;
 	rlm_rcode_t			rcode = RLM_MODULE_NOTFOUND;
 
@@ -868,10 +911,10 @@ finish:
 /** Process the results of evaluating LDAP group membership
  *
  */
-static xlat_action_t ldap_memberof_xlat_resume(TALLOC_CTX *ctx, fr_dcursor_t *out, xlat_ctx_t const *xctx,
+static xlat_action_t ldap_group_xlat_resume(TALLOC_CTX *ctx, fr_dcursor_t *out, xlat_ctx_t const *xctx,
 					    UNUSED request_t *request, UNUSED fr_value_box_list_t *in)
 {
-	ldap_memberof_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(xctx->rctx, ldap_memberof_xlat_ctx_t);
+	ldap_group_xlat_ctx_t	*xlat_ctx = talloc_get_type_abort(xctx->rctx, ldap_group_xlat_ctx_t);
 	fr_value_box_t			*vb;
 
 	MEM(vb = fr_value_box_alloc(ctx, FR_TYPE_BOOL, attr_expr_bool_enum));
@@ -881,7 +924,7 @@ static xlat_action_t ldap_memberof_xlat_resume(TALLOC_CTX *ctx, fr_dcursor_t *ou
 	return XLAT_ACTION_DONE;
 }
 
-static xlat_arg_parser_t const ldap_memberof_xlat_arg[] = {
+static xlat_arg_parser_t const ldap_group_xlat_arg[] = {
 	{ .required = true, .concat = true, .type = FR_TYPE_STRING, .safe_for = LDAP_URI_SAFE_FOR },
 	XLAT_ARG_PARSER_TERMINATOR
 };
@@ -890,7 +933,7 @@ static xlat_arg_parser_t const ldap_memberof_xlat_arg[] = {
  *
  * @ingroup xlat_functions
  */
-static xlat_action_t ldap_memberof_xlat(TALLOC_CTX *ctx, fr_dcursor_t *out, xlat_ctx_t const *xctx,
+static xlat_action_t ldap_group_xlat(TALLOC_CTX *ctx, fr_dcursor_t *out, xlat_ctx_t const *xctx,
 	 				request_t *request, fr_value_box_list_t *in)
 {
 	fr_value_box_t			*vb = NULL, *group_vb = fr_value_box_list_pop_head(in);
@@ -898,7 +941,7 @@ static xlat_action_t ldap_memberof_xlat(TALLOC_CTX *ctx, fr_dcursor_t *out, xlat
 	fr_ldap_thread_t		*t = talloc_get_type_abort(xctx->mctx->thread, fr_ldap_thread_t);
 	ldap_xlat_memberof_call_env_t	*env_data = talloc_get_type_abort(xctx->env_data, ldap_xlat_memberof_call_env_t);
 	bool				group_is_dn;
-	ldap_memberof_xlat_ctx_t	*xlat_ctx;
+	ldap_group_xlat_ctx_t	*xlat_ctx;
 
 	RDEBUG2("Searching for user in group \"%pV\"", group_vb);
 
@@ -949,9 +992,9 @@ static xlat_action_t ldap_memberof_xlat(TALLOC_CTX *ctx, fr_dcursor_t *out, xlat
 		}
 	}
 
-	MEM(xlat_ctx = talloc(unlang_interpret_frame_talloc_ctx(request), ldap_memberof_xlat_ctx_t));
+	MEM(xlat_ctx = talloc(unlang_interpret_frame_talloc_ctx(request), ldap_group_xlat_ctx_t));
 
-	*xlat_ctx = (ldap_memberof_xlat_ctx_t){
+	*xlat_ctx = (ldap_group_xlat_ctx_t){
 		.inst = inst,
 		.group = group_vb,
 		.dn = rlm_find_user_dn_cached(request),
@@ -970,10 +1013,10 @@ static xlat_action_t ldap_memberof_xlat(TALLOC_CTX *ctx, fr_dcursor_t *out, xlat
 		return XLAT_ACTION_FAIL;
 	}
 
-	if (unlang_xlat_yield(request, ldap_memberof_xlat_resume, NULL, 0, xlat_ctx) != XLAT_ACTION_YIELD) goto error;
+	if (unlang_xlat_yield(request, ldap_group_xlat_resume, NULL, 0, xlat_ctx) != XLAT_ACTION_YIELD) goto error;
 
-	if (unlang_function_push(request, xlat_ctx->dn ? NULL : ldap_memberof_xlat_user_find,
-				 ldap_memberof_xlat_results, ldap_memberof_xlat_cancel, ~FR_SIGNAL_CANCEL,
+	if (unlang_function_push(request, xlat_ctx->dn ? NULL : ldap_group_xlat_user_find,
+				 ldap_group_xlat_results, ldap_group_xlat_cancel, ~FR_SIGNAL_CANCEL,
 				 UNLANG_SUB_FRAME, xlat_ctx) < 0) goto error;
 
 	return XLAT_ACTION_PUSH_UNLANG;
@@ -1792,7 +1835,7 @@ static void mod_authorize_cancel(UNUSED request_t *request, UNUSED fr_signal_t a
 {
 	ldap_autz_ctx_t	*autz_ctx = talloc_get_type_abort(uctx, ldap_autz_ctx_t);
 
-	if (autz_ctx->query && autz_ctx->query->treq) fr_trunk_request_signal_cancel(autz_ctx->query->treq);
+	if (autz_ctx->query && autz_ctx->query->treq) trunk_request_signal_cancel(autz_ctx->query->treq);
 }
 
 /** Ensure authorization context is properly cleared up
@@ -1890,7 +1933,7 @@ static void user_modify_cancel(UNUSED request_t *request, UNUSED fr_signal_t act
 
 	if (!usermod_ctx->query || !usermod_ctx->query->treq) return;
 
-	fr_trunk_request_signal_cancel(usermod_ctx->query->treq);
+	trunk_request_signal_cancel(usermod_ctx->query->treq);
 }
 
 /** Handle results of user modification.
@@ -2230,8 +2273,8 @@ static int parse_sub_section(module_inst_ctx_t const *mctx,
 }
 
 static int ldap_update_section_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out, tmpl_rules_t const *t_rules,
-				     CONF_ITEM *ci, UNUSED char const *section_name1, UNUSED char const *section_name2,
-				     UNUSED void const *data, call_env_parser_t const *rule)
+				     CONF_ITEM *ci,
+				     UNUSED call_env_ctx_t const *cec, call_env_parser_t const *rule)
 {
 	map_list_t			*maps;
 	CONF_SECTION			*update = cf_item_to_section(ci);
@@ -2309,12 +2352,11 @@ static int ldap_update_section_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *ou
 }
 
 static int ldap_group_filter_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rules, UNUSED CONF_ITEM *ci,
-				   UNUSED char const *section_name1, UNUSED char const *section_name2,
-				   void const *data, UNUSED call_env_parser_t const *rule)
+				   call_env_ctx_t const *cec, UNUSED call_env_parser_t const *rule)
 {
-	rlm_ldap_t const	*inst = talloc_get_type_abort_const(data, rlm_ldap_t);
-	char const		*filters[] = { inst->group.obj_filter, inst->group.obj_membership_filter };
-	tmpl_t			*parsed;
+	rlm_ldap_t const		*inst = talloc_get_type_abort_const(cec->mi->data, rlm_ldap_t);
+	char const			*filters[] = { inst->group.obj_filter, inst->group.obj_membership_filter };
+	tmpl_t				*parsed;
 
 	if (fr_ldap_filter_to_tmpl(ctx, t_rules, filters, NUM_ELEMENTS(filters), &parsed) < 0) return -1;
 
@@ -2663,15 +2705,15 @@ static int mod_bootstrap(module_inst_ctx_t const *mctx)
 		boot->cache_da = boot->group_da;	/* Default to the group_da */
 	}
 
-	xlat = xlat_func_register_module(mctx->mi->boot, mctx, NULL, ldap_xlat, FR_TYPE_STRING);
+	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, NULL, ldap_xlat, FR_TYPE_STRING);
 	xlat_func_args_set(xlat, ldap_xlat_arg);
 
-	if (unlikely(!(xlat = xlat_func_register_module(mctx->mi->boot, mctx, "memberof", ldap_memberof_xlat,
+	if (unlikely(!(xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, "group", ldap_group_xlat,
 							FR_TYPE_BOOL)))) return -1;
-	xlat_func_args_set(xlat, ldap_memberof_xlat_arg);
+	xlat_func_args_set(xlat, ldap_group_xlat_arg);
 	xlat_func_call_env_set(xlat, &xlat_memberof_method_env);
 
-	if (unlikely(!(xlat = xlat_func_register_module(mctx->mi->boot, mctx, "profile", ldap_profile_xlat,
+	if (unlikely(!(xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, "profile", ldap_profile_xlat,
 							FR_TYPE_BOOL)))) return -1;
 	xlat_func_args_set(xlat, ldap_xlat_arg);
 	xlat_func_call_env_set(xlat, &xlat_profile_method_env);
@@ -2713,33 +2755,35 @@ static void mod_unload(void)
 extern module_rlm_t rlm_ldap;
 module_rlm_t rlm_ldap = {
 	.common = {
-		.magic		= MODULE_MAGIC_INIT,
-		.name		= "ldap",
-		.flags		= 0,
-		.boot_size	= sizeof(rlm_ldap_boot_t),
-		.boot_type	= "rlm_ldap_boot_t",
-		.inst_size	= sizeof(rlm_ldap_t),
-		.config		= module_config,
-		.onload		= mod_load,
-		.unload		= mod_unload,
-		.bootstrap	= mod_bootstrap,
-		.instantiate	= mod_instantiate,
-		.detach		= mod_detach,
+		.magic			= MODULE_MAGIC_INIT,
+		.name			= "ldap",
+		.flags			= 0,
+		.boot_size		= sizeof(rlm_ldap_boot_t),
+		.boot_type		= "rlm_ldap_boot_t",
+		.inst_size		= sizeof(rlm_ldap_t),
+		.config			= module_config,
+		.onload			= mod_load,
+		.unload			= mod_unload,
+		.bootstrap		= mod_bootstrap,
+		.instantiate		= mod_instantiate,
+		.detach			= mod_detach,
 		.thread_inst_size	= sizeof(fr_ldap_thread_t),
 		.thread_inst_type	= "fr_ldap_thread_t",
 		.thread_instantiate	= mod_thread_instantiate,
 		.thread_detach		= mod_thread_detach,
 	},
-	.bindings = (module_method_binding_t[]){
-		/*
-		 *	Hack to support old configurations
-		 */
-		{ .section = SECTION_NAME("accounting", CF_IDENT_ANY), .method = mod_accounting, .method_env = &usermod_method_env },
-		{ .section = SECTION_NAME("authenticate", CF_IDENT_ANY), .method = mod_authenticate, .method_env = &authenticate_method_env },
-		{ .section = SECTION_NAME("authorize", CF_IDENT_ANY), .method = mod_authorize, .method_env = &authorize_method_env },
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			/*
+			 *	Hack to support old configurations
+			 */
+			{ .section = SECTION_NAME("accounting", CF_IDENT_ANY), .method = mod_accounting, .method_env = &usermod_method_env },
+			{ .section = SECTION_NAME("authenticate", CF_IDENT_ANY), .method = mod_authenticate, .method_env = &authenticate_method_env },
+			{ .section = SECTION_NAME("authorize", CF_IDENT_ANY), .method = mod_authorize, .method_env = &authorize_method_env },
 
-		{ .section = SECTION_NAME("recv", CF_IDENT_ANY), .method = mod_authorize, .method_env = &authorize_method_env },
-		{ .section = SECTION_NAME("send", CF_IDENT_ANY), .method = mod_post_auth, .method_env = &usermod_method_env },
-		MODULE_BINDING_TERMINATOR
+			{ .section = SECTION_NAME("recv", CF_IDENT_ANY), .method = mod_authorize, .method_env = &authorize_method_env },
+			{ .section = SECTION_NAME("send", CF_IDENT_ANY), .method = mod_post_auth, .method_env = &usermod_method_env },
+			MODULE_BINDING_TERMINATOR
+		}
 	}
 };

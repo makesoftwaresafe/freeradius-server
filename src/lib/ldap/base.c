@@ -655,7 +655,7 @@ static void ldap_trunk_query_cancel(UNUSED request_t *request, UNUSED fr_signal_
 	 */
 	talloc_steal(query->treq, query);
 
-	fr_trunk_request_signal_cancel(query->treq);
+	trunk_request_signal_cancel(query->treq);
 
 	/*
 	 *	Once we've called cancel, the treq is no
@@ -701,9 +701,9 @@ unlang_action_t fr_ldap_trunk_search(TALLOC_CTX *ctx,
 
 	query = fr_ldap_search_alloc(ctx, base_dn, scope, filter, attrs, serverctrls, clientctrls);
 
-	switch (fr_trunk_request_enqueue(&query->treq, ttrunk->trunk, request, query, NULL)) {
-	case FR_TRUNK_ENQUEUE_OK:
-	case FR_TRUNK_ENQUEUE_IN_BACKLOG:
+	switch (trunk_request_enqueue(&query->treq, ttrunk->trunk, request, query, NULL)) {
+	case TRUNK_ENQUEUE_OK:
+	case TRUNK_ENQUEUE_IN_BACKLOG:
 		break;
 
 	default:
@@ -747,9 +747,9 @@ unlang_action_t fr_ldap_trunk_modify(TALLOC_CTX *ctx,
 
 	query = fr_ldap_modify_alloc(ctx, dn, mods, serverctrls, clientctrls);
 
-	switch (fr_trunk_request_enqueue(&query->treq, ttrunk->trunk, request, query, NULL)) {
-	case FR_TRUNK_ENQUEUE_OK:
-	case FR_TRUNK_ENQUEUE_IN_BACKLOG:
+	switch (trunk_request_enqueue(&query->treq, ttrunk->trunk, request, query, NULL)) {
+	case TRUNK_ENQUEUE_OK:
+	case TRUNK_ENQUEUE_IN_BACKLOG:
 		break;
 
 	default:
@@ -802,7 +802,47 @@ fr_ldap_rcode_t fr_ldap_modify_async(int *msgid, request_t *request, fr_ldap_con
 	RDEBUG2("Modifying object with DN \"%s\"", dn);
 	if(ldap_modify_ext(pconn->handle, dn, mods, our_serverctrls, our_clientctrls, msgid) != LDAP_SUCCESS) {
 		fr_ldap_rcode_t	ret = fr_ldap_error_check(NULL, pconn, NULL, NULL);
-		ROPTIONAL(RPEDEBUG, RPERROR, "Failed modifying object");
+		ROPTIONAL(RPEDEBUG, RPERROR, "Failed sending request to modify object");
+
+		return ret;
+	}
+
+	return LDAP_PROC_SUCCESS;
+}
+
+/** Modify something in the LDAP directory
+ *
+ * Used on connections bound as the administrative user to attempt to modify an LDAP object.
+ * Called by the trunk mux function
+ *
+ * @param[out] msgid		LDAP message ID.
+ * @param[in] request		Current request.
+ * @param[in] pconn		to use.
+ * @param[in] dn		of the object to delete.
+ * @param[in] serverctrls	Search controls to pass to the server.  May be NULL.
+ * @param[in] clientctrls	Search controls for ldap_delete.  May be NULL.
+ * @return One of the LDAP_PROC_* (#fr_ldap_rcode_t) values.
+ */
+fr_ldap_rcode_t fr_ldap_delete_async(int *msgid, request_t *request, fr_ldap_connection_t *pconn,
+				     char const *dn,
+				     LDAPControl **serverctrls, LDAPControl **clientctrls)
+{
+	LDAPControl	*our_serverctrls[LDAP_MAX_CONTROLS];
+	LDAPControl	*our_clientctrls[LDAP_MAX_CONTROLS];
+
+	fr_ldap_control_merge(our_serverctrls, our_clientctrls,
+			      NUM_ELEMENTS(our_serverctrls),
+			      NUM_ELEMENTS(our_clientctrls),
+			      pconn, serverctrls, clientctrls);
+
+	fr_assert(pconn && pconn->handle);
+
+	if (RDEBUG_ENABLED4) fr_ldap_timeout_debug(request, pconn, fr_time_delta_wrap(0), __FUNCTION__);
+
+	RDEBUG2("Deleting object with DN \"%s\"", dn);
+	if(ldap_delete_ext(pconn->handle, dn, our_serverctrls, our_clientctrls, msgid) != LDAP_SUCCESS) {
+		fr_ldap_rcode_t	ret = fr_ldap_error_check(NULL, pconn, NULL, NULL);
+		ROPTIONAL(RPEDEBUG, RPERROR, "Failed sending request to delete object");
 
 		return ret;
 	}
@@ -834,9 +874,9 @@ unlang_action_t fr_ldap_trunk_extended(TALLOC_CTX *ctx,
 
 	query = fr_ldap_extended_alloc(ctx, reqoid, reqdata, serverctrls, clientctrls);
 
-	switch (fr_trunk_request_enqueue(&query->treq, ttrunk->trunk, request, query, NULL)) {
-	case FR_TRUNK_ENQUEUE_OK:
-	case FR_TRUNK_ENQUEUE_IN_BACKLOG:
+	switch (trunk_request_enqueue(&query->treq, ttrunk->trunk, request, query, NULL)) {
+	case TRUNK_ENQUEUE_OK:
+	case TRUNK_ENQUEUE_IN_BACKLOG:
 		break;
 
 	default:
@@ -928,7 +968,7 @@ static int _ldap_query_free(fr_ldap_query_t *query)
 
 		/*
 		 *	If the connection this query was using has no pending queries and
-		 * 	is no-longer associated with a fr_connection_t then free it
+		 * 	is no-longer associated with a connection_t then free it
 		 */
 		if (!query->ldap_conn->conn && (fr_dlist_num_elements(&query->ldap_conn->refs) == 0) &&
 	    	    (fr_rb_num_elements(query->ldap_conn->queries) == 0)) talloc_free(query->ldap_conn);

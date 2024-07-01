@@ -32,6 +32,7 @@ extern "C" {
 
 typedef struct module_s				module_t;
 typedef struct module_state_func_table_s	module_state_func_table_t;
+typedef struct module_method_group_s		module_method_group_t;
 typedef struct module_method_binding_s		module_method_binding_t;
 typedef struct module_instance_s		module_instance_t;
 typedef struct module_thread_instance_s		module_thread_instance_t;
@@ -149,6 +150,23 @@ extern "C" {
  */
 #define MODULE_BINDING_TERMINATOR { .section = NULL }
 
+/** A group of methods exported by a module or added as an overlay
+ *
+ * Module method groups are organised into a linked list, with each group
+ * containing a list of named methods.  This allows common collections of
+ * methods to be added to a module.
+ *
+ * One common use case is adding the `instantiate`, `exists`, and `detach`
+ * methods which are added to dynamic modules, and allow dynamic module
+ * instances to be created and destroyed at runtime.
+ */
+struct module_method_group_s {
+	module_method_binding_t			*bindings;		//!< named methods
+
+	bool					validated;		//!< Set to true by #module_method_group_validate.
+	module_method_group_t			*next;			//!< Next group in the list.
+};
+
 /** Named methods exported by a module
  *
  */
@@ -158,10 +176,10 @@ struct module_method_binding_s {
 	module_method_t				method;			//!< Module method to call
 	call_env_method_t const			*method_env;		//!< Method specific call_env.
 
-	fr_dlist_head_t				name2_list;		//!< List of bindings with the same name1.  Only initialised
+	fr_dlist_head_t				same_name1;		//!< List of bindings with the same name1.  Only initialised
 									///< for the the first name1 binding.
 									///< DO NOT INITIALISE IN THE MODULE.
-	fr_dlist_t				name2_entry;		//!< Linked list of bindings with the same name1.
+	fr_dlist_t				entry;			//!< Linked list of bindings with the same name1.
 									///< Allows us to more quickly iterate over all
 									///< name2 entries after finding a matching name1.
 									///< This is also temporarily used to verify the ordering
@@ -238,9 +256,9 @@ typedef struct {
 	size_t 				len;		//!< How much data we need mprotect to protect.
 } module_data_pool_t;
 
-/** Per instance data
+/** Module instance data
  *
- * Per-instance data structure, to correlate the modules with the
+ * Per-module-instance data structure to correlate the modules with the
  * instance names (may NOT be the module names!), and the per-instance
  * data structures.
  */
@@ -251,21 +269,21 @@ struct module_instance_s {
 	* @{
 	*/
 	void				*data;		//!< Module's instance data.  This is most
-							///< frequently access comes first.
+							///< frequently accessed, so comes first.
 
 	void				*boot;		//!< Data allocated during the boostrap phase
 
-	module_t const			*exported;	//!< Public module structure.  Cached for convenience.
+	module_t			*exported;	//!< Public module structure.  Cached for convenience.
 							///< This exports module methods, i.e. the functions
 							///< which allow the module to perform actions.
-							///< This is an identical address to dl_module->common,
+							///< This is an identical address to module->common,
 							///< but with a different type, containing additional
 							///< instance callbacks to make it easier to use.
 
 	pthread_mutex_t			mutex;		//!< Used prevent multiple threads entering a thread
 							///< unsafe module simultaneously.
 
-	dl_module_t			*module;	//!< dynamic loader handle.  Contains the module's
+	dl_module_t			*module;	//!< Dynamic loader handle.  Contains the module's
 							///< dlhandle, and the functions it exports.
 							///< The dl_module is reference counted so that it
 							///< can be freed automatically when the last instance
@@ -317,6 +335,8 @@ struct module_instance_s {
 	char const			*name;		//!< Instance name e.g. user_database.
 
 	module_instance_t const		*parent;	//!< Parent module's instance (if any).
+
+	void				*uctx;		//!< Extra data passed to module_instance_alloc.
 	/** @} */
 };
 
@@ -340,6 +360,9 @@ struct module_thread_instance_s {
 };
 
 /** Callback to retrieve thread-local data for a module
+ *
+ * This is public for performance reasons, and should be called through
+ * #module_thread.
  *
  * @param[in] mi	to add data to (use mi->ml for the module list).
  * @return
@@ -496,6 +519,8 @@ module_instance_t	*module_instance_alloc(module_list_t *ml,
 					       module_instance_state_t init_state)
 					       CC_HINT(nonnull(1)) CC_HINT(warn_unused_result);
 
+void			module_instance_uctx_set(module_instance_t *mi, void *uctx);
+
 /** @name Module list variants
  *
  * These are passed to the module_list_alloc function to allocate lists of different types
@@ -508,7 +533,7 @@ module_instance_t	*module_instance_alloc(module_list_t *ml,
  *
  * @{
  */
-extern module_list_type_t const module_list_type_global;		//!< Initialise a global module, with thread-specific data.
+extern module_list_type_t const module_list_type_global;	//!< Initialise a global module, with thread-specific data.
 extern module_list_type_t const module_list_type_thread_local;	//!< Initialise a thread-local module, which is only used in a single thread.
 /** @} */
 

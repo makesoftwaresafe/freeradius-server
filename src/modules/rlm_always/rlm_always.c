@@ -174,7 +174,7 @@ static int mod_bootstrap(module_inst_ctx_t const *mctx)
 {
 	xlat_t		*xlat;
 
-	xlat = xlat_func_register_module(mctx->mi->boot, mctx, NULL, always_xlat, FR_TYPE_STRING);
+	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, NULL, always_xlat, FR_TYPE_STRING);
 	xlat_func_args_set(xlat, always_xlat_args);
 
 	return 0;
@@ -191,8 +191,10 @@ module_rlm_t rlm_always = {
 		.instantiate	= mod_instantiate,
 		.detach		= mod_detach
 	},
-	.bindings = (module_method_binding_t[]){
-		{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_always_return },
-		MODULE_BINDING_TERMINATOR
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_always_return },
+			MODULE_BINDING_TERMINATOR
+		}
 	}
 };

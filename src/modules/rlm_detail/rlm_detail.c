@@ -402,11 +402,11 @@ static unlang_action_t CC_HINT(nonnull) mod_post_auth(rlm_rcode_t *p_result, mod
 	return detail_do(p_result, mctx, request, request->reply, &request->reply_pairs, false);
 }
 
-static int call_env_filename_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci,
-				   UNUSED char const *section_name1, UNUSED char const *section_name2,
-				   void const *data, UNUSED call_env_parser_t const *rule)
+static int call_env_filename_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rules,
+				   CONF_ITEM *ci,
+				   call_env_ctx_t const *cec, UNUSED call_env_parser_t const *rule)
 {
-	rlm_detail_t const	*inst = talloc_get_type_abort_const(data, rlm_detail_t);
+	rlm_detail_t const	*inst = talloc_get_type_abort_const(cec->mi->data, rlm_detail_t);
 	tmpl_t			*parsed;
 	CONF_PAIR const		*to_parse = cf_item_to_pair(ci);
 	tmpl_rules_t		our_rules;
@@ -427,8 +427,8 @@ static int call_env_filename_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t cons
 }
 
 static int call_env_suppress_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out, tmpl_rules_t const *t_rules,
-				   CONF_ITEM *ci, UNUSED char const *section_name1, UNUSED char const *section_name2,
-				   UNUSED void const *data, UNUSED call_env_parser_t const *rule)
+				   CONF_ITEM *ci,
+				   UNUSED call_env_ctx_t const *cec, UNUSED call_env_parser_t const *rule)
 {
 	CONF_SECTION const	*cs = cf_item_to_section(ci);
 	CONF_SECTION const	*parent = cf_item_to_section(cf_parent(ci));
@@ -508,11 +508,13 @@ module_rlm_t rlm_detail = {
 		.config		= module_config,
 		.instantiate	= mod_instantiate
 	},
-	.bindings = (module_method_binding_t[]){
-		{ .section = SECTION_NAME("accounting", CF_IDENT_ANY), .method = mod_accounting, .method_env = &method_env },
-		{ .section = SECTION_NAME("recv", "accounting-request"), .method = mod_accounting, .method_env = &method_env },
-		{ .section = SECTION_NAME("recv", CF_IDENT_ANY), .method = mod_authorize, .method_env = &method_env },
-		{ .section = SECTION_NAME("send", CF_IDENT_ANY), .method = mod_post_auth, .method_env = &method_env },
-		MODULE_BINDING_TERMINATOR
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			{ .section = SECTION_NAME("accounting", CF_IDENT_ANY), .method = mod_accounting, .method_env = &method_env },
+			{ .section = SECTION_NAME("recv", "accounting-request"), .method = mod_accounting, .method_env = &method_env },
+			{ .section = SECTION_NAME("recv", CF_IDENT_ANY), .method = mod_authorize, .method_env = &method_env },
+			{ .section = SECTION_NAME("send", CF_IDENT_ANY), .method = mod_post_auth, .method_env = &method_env },
+			MODULE_BINDING_TERMINATOR
+		}
 	}
 };

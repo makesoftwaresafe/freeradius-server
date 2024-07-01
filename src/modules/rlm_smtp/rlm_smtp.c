@@ -942,8 +942,8 @@ static int mod_thread_detach(module_thread_inst_ctx_t const *mctx)
  *
  */
 static int smtp_header_section_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out, tmpl_rules_t const *t_rules,
-				     CONF_ITEM *ci, UNUSED char const *section_name1, UNUSED char const *section_name2,
-				     UNUSED void const *data, UNUSED call_env_parser_t const *rule)
+				     CONF_ITEM *ci,
+				     UNUSED call_env_ctx_t const *cec, UNUSED call_env_parser_t const *rule)
 {
 	CONF_SECTION const	*cs = cf_item_to_section(ci);
 	CONF_ITEM const		*item = NULL;
@@ -1050,10 +1050,12 @@ module_rlm_t rlm_smtp = {
 		.thread_instantiate 	= mod_thread_instantiate,
 		.thread_detach      	= mod_thread_detach,
 	},
-	.bindings = (module_method_binding_t[]){
-		{ .section = SECTION_NAME("authenticate", CF_IDENT_ANY), .method = mod_authenticate, .method_env = &auth_env },
-		{ .section = SECTION_NAME("mail", CF_IDENT_ANY), .method = mod_mail, .method_env = &method_env },
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			{ .section = SECTION_NAME("authenticate", CF_IDENT_ANY), .method = mod_authenticate, .method_env = &auth_env },
+			{ .section = SECTION_NAME("mail", CF_IDENT_ANY), .method = mod_mail, .method_env = &method_env },
 
-		MODULE_BINDING_TERMINATOR
+			MODULE_BINDING_TERMINATOR
+		}
 	}
 };

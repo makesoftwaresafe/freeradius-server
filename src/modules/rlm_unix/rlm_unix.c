@@ -190,7 +190,7 @@ static int mod_bootstrap(module_inst_ctx_t const *mctx)
 	 *	function automatically adds the module instance name
 	 *	as a prefix.
 	 */
-	xlat = xlat_func_register_module(mctx->mi->boot, mctx, "group", unix_group_xlat, FR_TYPE_BOOL);
+	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, "group", unix_group_xlat, FR_TYPE_BOOL);
 	if (!xlat) {
 		PERROR("Failed registering group expansion");
 		return -1;
@@ -560,10 +560,12 @@ module_rlm_t rlm_unix = {
 		.config		= module_config,
 		.bootstrap	= mod_bootstrap
 	},
-	.bindings = (module_method_binding_t[]){
-		{ .section = SECTION_NAME("accounting", CF_IDENT_ANY), .method = mod_accounting },
-		{ .section = SECTION_NAME("recv", "access-request"), .method = mod_authorize },
-		{ .section = SECTION_NAME("send", "accounting-response"), .method = mod_accounting },	/* Backwards compatibility */
-		MODULE_BINDING_TERMINATOR
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			{ .section = SECTION_NAME("accounting", CF_IDENT_ANY), .method = mod_accounting },
+			{ .section = SECTION_NAME("recv", "Access-Request"), .method = mod_authorize },
+			{ .section = SECTION_NAME("send", "Accounting-Response"), .method = mod_accounting },	/* Backwards compatibility */
+			MODULE_BINDING_TERMINATOR
+		}
 	}
 };

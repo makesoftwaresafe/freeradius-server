@@ -43,8 +43,8 @@ RCSID("$Id$")
 extern module_rlm_t rlm_cache;
 
 int submodule_parse(TALLOC_CTX *ctx, void *out, void *parent, CONF_ITEM *ci, conf_parser_t const *rule);
-static int cache_key_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci, char const *section_name1, char const *section_name2, void const *data, call_env_parser_t const *rule);
-static int cache_update_section_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci, char const *section_name1, char const *section_name2, void const *data, call_env_parser_t const *rule);
+static int cache_key_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci, call_env_ctx_t const *cec, call_env_parser_t const *rule);
+static int cache_update_section_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci, call_env_ctx_t const *cec, call_env_parser_t const *rule);
 
 static const conf_parser_t module_config[] = {
 	{ FR_CONF_OFFSET_TYPE_FLAGS("driver", FR_TYPE_VOID, 0, rlm_cache_t, driver_submodule), .dflt = "rbtree",
@@ -118,10 +118,10 @@ int submodule_parse(TALLOC_CTX *ctx, void *out, void *parent, CONF_ITEM *ci, con
 }
 
 static int cache_key_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci,
-			   char const *section_name1, char const *section_name2, void const *data,
+			   call_env_ctx_t const *cec,
 			   call_env_parser_t const *rule)
 {
-	rlm_cache_t const	*inst = talloc_get_type_abort_const(data, rlm_cache_t);
+	rlm_cache_t const	*inst = talloc_get_type_abort_const(cec->mi->data, rlm_cache_t);
 	call_env_parse_pair_t	func = inst->driver->key_parse ? inst->driver->key_parse : call_env_parse_pair;
 	tmpl_t			*key_tmpl;
 	fr_type_t		cast;
@@ -130,8 +130,7 @@ static int cache_key_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rul
 	 *	Call the custom key parse function, OR the standard call_env_parse_pair
 	 *	function, depending on whether the driver calls a custom parsing function.
 	 */
-	if (unlikely((ret = func(ctx, &key_tmpl, t_rules, ci, section_name1, section_name2,
-				 inst->driver_submodule->data, rule)) < 0)) return ret;
+	if (unlikely((ret = func(ctx, &key_tmpl, t_rules, ci, inst->driver_submodule->data, rule)) < 0)) return ret;
 	*((tmpl_t **)out) = key_tmpl;
 
 	/*
@@ -1418,8 +1417,8 @@ static int cache_verify(map_t *map, void *uctx)
 }
 
 static int cache_update_section_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out, tmpl_rules_t const *t_rules,
-				      CONF_ITEM *ci, UNUSED char const *section_name1, UNUSED char const *section_name2,
-				      UNUSED void const *data, UNUSED call_env_parser_t const *rule)
+				      CONF_ITEM *ci,
+				      UNUSED call_env_ctx_t const *cec, UNUSED call_env_parser_t const *rule)
 {
 	CONF_SECTION		*update = cf_item_to_section(ci);
 	call_env_parsed_t	*parsed;
@@ -1487,11 +1486,11 @@ static int mod_bootstrap(module_inst_ctx_t const *mctx)
 	/*
 	 *	Register the cache xlat function
 	 */
-	xlat = xlat_func_register_module(mctx->mi->boot, mctx, NULL, cache_xlat, FR_TYPE_VOID);
+	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, NULL, cache_xlat, FR_TYPE_VOID);
 	xlat_func_args_set(xlat, cache_xlat_args);
 	xlat_func_call_env_set(xlat, &cache_method_env);
 
-	xlat = xlat_func_register_module(mctx->mi->boot, mctx, "ttl.get", cache_ttl_get_xlat, FR_TYPE_VOID);
+	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, "ttl.get", cache_ttl_get_xlat, FR_TYPE_VOID);
 	xlat_func_call_env_set(xlat, &cache_method_env);
 
 	return 0;
@@ -1516,14 +1515,16 @@ module_rlm_t rlm_cache = {
 		.instantiate	= mod_instantiate,
 		.detach		= mod_detach
 	},
-	.bindings = (module_method_binding_t[]){
-		{ .section = SECTION_NAME("clear", CF_IDENT_ANY),		.method = mod_method_clear,	.method_env = &cache_method_env },
-		{ .section = SECTION_NAME("load", CF_IDENT_ANY),		.method = mod_method_load,	.method_env = &cache_method_env },
-		{ .section = SECTION_NAME("status", CF_IDENT_ANY),		.method = mod_method_status,	.method_env = &cache_method_env },
-		{ .section = SECTION_NAME("store", CF_IDENT_ANY),		.method = mod_method_store,	.method_env = &cache_method_env },
-		{ .section = SECTION_NAME("ttl", CF_IDENT_ANY),			.method = mod_method_ttl,	.method_env = &cache_method_env },
-		{ .section = SECTION_NAME("update", CF_IDENT_ANY),		.method = mod_method_update,	.method_env = &cache_method_env },
-		{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY),		.method = mod_cache_it,		.method_env = &cache_method_env },
-		MODULE_BINDING_TERMINATOR
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			{ .section = SECTION_NAME("clear", CF_IDENT_ANY), .method = mod_method_clear, .method_env = &cache_method_env },
+			{ .section = SECTION_NAME("load", CF_IDENT_ANY), .method = mod_method_load, .method_env = &cache_method_env },
+			{ .section = SECTION_NAME("status", CF_IDENT_ANY), .method = mod_method_status, .method_env = &cache_method_env },
+			{ .section = SECTION_NAME("store", CF_IDENT_ANY), .method = mod_method_store, .method_env = &cache_method_env },
+			{ .section = SECTION_NAME("ttl", CF_IDENT_ANY), .method = mod_method_ttl, .method_env = &cache_method_env },
+			{ .section = SECTION_NAME("update", CF_IDENT_ANY), .method = mod_method_update, .method_env = &cache_method_env },
+			{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_cache_it, .method_env = &cache_method_env },
+			MODULE_BINDING_TERMINATOR
+		}
 	}
 };

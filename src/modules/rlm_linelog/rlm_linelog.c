@@ -65,8 +65,7 @@ RCSID("$Id$")
 
 static int linelog_escape_func(fr_value_box_t *vb, UNUSED void *uctx);
 static int call_env_filename_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci,
-				   UNUSED char const *section_name1, UNUSED char const *section_name2,
-				   void const *data, UNUSED call_env_parser_t const *rule);
+				   call_env_ctx_t const *cec, UNUSED call_env_parser_t const *rule);
 typedef enum {
 	LINELOG_DST_INVALID = 0,
 	LINELOG_DST_FILE,				//!< Log to a file.
@@ -876,13 +875,12 @@ build_vector:
  *	Custom call env parser for filenames - sets the correct escaping function
  */
 static int call_env_filename_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci,
-				   UNUSED char const *section_name1, UNUSED char const *section_name2,
-				   void const *data, UNUSED call_env_parser_t const *rule)
+				   call_env_ctx_t const *cec, UNUSED call_env_parser_t const *rule)
 {
-	rlm_linelog_t const	*inst = talloc_get_type_abort_const(data, rlm_linelog_t);
-	tmpl_t			*parsed;
-	CONF_PAIR const		*to_parse = cf_item_to_pair(ci);
-	tmpl_rules_t		our_rules;
+	rlm_linelog_t const		*inst = talloc_get_type_abort_const(cec->mi->data, rlm_linelog_t);
+	tmpl_t				*parsed;
+	CONF_PAIR const			*to_parse = cf_item_to_pair(ci);
+	tmpl_rules_t			our_rules;
 
 	/*
 	 *	If we're not logging to a file destination, do nothing
@@ -1040,7 +1038,7 @@ static int mod_bootstrap(module_inst_ctx_t const *mctx)
 		XLAT_ARG_PARSER_TERMINATOR
 	};
 
-	xlat = xlat_func_register_module(mctx->mi->boot, mctx, NULL, linelog_xlat, FR_TYPE_SIZE);
+	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, NULL, linelog_xlat, FR_TYPE_SIZE);
 	xlat_func_args_set(xlat, linelog_xlat_args);
 	xlat_func_call_env_set(xlat, &linelog_xlat_method_env );
 
@@ -1061,8 +1059,10 @@ module_rlm_t rlm_linelog = {
 		.instantiate	= mod_instantiate,
 		.detach		= mod_detach
 	},
-	.bindings = (module_method_binding_t[]){
-		{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_do_linelog, .method_env = &linelog_method_env },
-		MODULE_BINDING_TERMINATOR
+	.method_group = {
+		.bindings = (module_method_binding_t[]){
+			{ .section = SECTION_NAME(CF_IDENT_ANY, CF_IDENT_ANY), .method = mod_do_linelog, .method_env = &linelog_method_env },
+			MODULE_BINDING_TERMINATOR
+		}
 	}
 };

@@ -261,12 +261,12 @@ static int CC_HINT(nonnull) sql_socket_init(rlm_sql_handle_t *handle, UNUSED rlm
 	return 0;
 }
 
-static CC_HINT(nonnull) sql_rcode_t sql_query(rlm_sql_handle_t *handle, rlm_sql_config_t const *config,
-					      char const *query)
+static unlang_action_t sql_query(rlm_rcode_t *p_result, UNUSED int *priority, UNUSED request_t *request, void *uctx)
 {
-	rlm_sql_postgres_conn_t	*conn = handle->conn;
-	rlm_sql_postgresql_t	*inst = talloc_get_type_abort(handle->inst->driver_submodule->data, rlm_sql_postgresql_t);
-	fr_time_delta_t		timeout = config->query_timeout;
+	fr_sql_query_t		*query_ctx = talloc_get_type_abort(uctx, fr_sql_query_t);
+	rlm_sql_postgres_conn_t	*conn = query_ctx->handle->conn;
+	rlm_sql_postgresql_t	*inst = talloc_get_type_abort(query_ctx->inst->driver_submodule->data, rlm_sql_postgresql_t);
+	fr_time_delta_t		timeout = query_ctx->inst->config.query_timeout;
 	fr_time_t		start;
 	int			sockfd;
 	PGresult		*tmp_result;
@@ -275,18 +275,20 @@ static CC_HINT(nonnull) sql_rcode_t sql_query(rlm_sql_handle_t *handle, rlm_sql_
 
 	if (!conn->db) {
 		ERROR("Socket not connected");
-		return RLM_SQL_RECONNECT;
+	reconnect:
+		query_ctx->rcode = RLM_SQL_RECONNECT;
+		RETURN_MODULE_FAIL;
 	}
 
 	sockfd = PQsocket(conn->db);
 	if (sockfd < 0) {
 		ERROR("Unable to obtain socket: %s", PQerrorMessage(conn->db));
-		return RLM_SQL_RECONNECT;
+		goto reconnect;
 	}
 
-	if (!PQsendQuery(conn->db, query)) {
+	if (!PQsendQuery(conn->db, query_ctx->query_str)) {
 		ERROR("Failed to send query: %s", PQerrorMessage(conn->db));
-		return RLM_SQL_RECONNECT;
+		goto reconnect;
 	}
 
 	/*
@@ -302,26 +304,26 @@ static CC_HINT(nonnull) sql_rcode_t sql_query(rlm_sql_handle_t *handle, rlm_sql_
 		FD_ZERO(&read_fd);
 		FD_SET(sockfd, &read_fd);
 
-		if (fr_time_delta_ispos(config->query_timeout)) {
+		if (fr_time_delta_ispos(timeout)) {
 			elapsed = fr_time_sub(fr_time(), start);
 			if (fr_time_delta_gteq(elapsed, timeout)) goto too_long;
 		}
 
-		r = select(sockfd + 1, &read_fd, NULL, NULL, fr_time_delta_ispos(config->query_timeout) ?
+		r = select(sockfd + 1, &read_fd, NULL, NULL, fr_time_delta_ispos(timeout) ?
 			   &fr_time_delta_to_timeval(fr_time_delta_sub(timeout, elapsed)) : NULL);
 		if (r == 0) {
 		too_long:
-			ERROR("Socket read timeout after %d seconds", (int) fr_time_delta_to_sec(config->query_timeout));
-			return RLM_SQL_RECONNECT;
+			ERROR("Socket read timeout after %d seconds", (int) fr_time_delta_to_sec(timeout));
+			goto reconnect;
 		}
 		if (r < 0) {
 			if (errno == EINTR) continue;
 			ERROR("Failed in select: %s", fr_syserror(errno));
-			return RLM_SQL_RECONNECT;
+			goto reconnect;
 		}
 		if (!PQconsumeInput(conn->db)) {
 			ERROR("Failed reading input: %s", PQerrorMessage(conn->db));
-			return RLM_SQL_RECONNECT;
+			goto reconnect;
 		}
 	}
 
@@ -346,7 +348,7 @@ static CC_HINT(nonnull) sql_rcode_t sql_query(rlm_sql_handle_t *handle, rlm_sql_
 	 */
 	if (!conn->result) {
 		ERROR("Failed getting query result: %s", PQerrorMessage(conn->db));
-		return RLM_SQL_RECONNECT;
+		goto reconnect;
 	}
 
 	status = PQresultStatus(conn->result);
@@ -397,17 +399,14 @@ static CC_HINT(nonnull) sql_rcode_t sql_query(rlm_sql_handle_t *handle, rlm_sql_
 		break;
 	}
 
-	return sql_classify_error(inst, status, conn->result);
+	query_ctx->rcode = sql_classify_error(inst, status, conn->result);
+	if (query_ctx->rcode != RLM_SQL_OK) RETURN_MODULE_FAIL;
+	RETURN_MODULE_OK;
 }
 
-static sql_rcode_t sql_select_query(rlm_sql_handle_t * handle, rlm_sql_config_t const *config, char const *query)
+static sql_rcode_t sql_fields(char const **out[], fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
-	return sql_query(handle, config, query);
-}
-
-static sql_rcode_t sql_fields(char const **out[], rlm_sql_handle_t *handle, UNUSED rlm_sql_config_t const *config)
-{
-	rlm_sql_postgres_conn_t *conn = handle->conn;
+	rlm_sql_postgres_conn_t *conn = query_ctx->handle->conn;
 
 	int		fields, i;
 	char const	**names;
@@ -415,7 +414,7 @@ static sql_rcode_t sql_fields(char const **out[], rlm_sql_handle_t *handle, UNUS
 	fields = PQnfields(conn->result);
 	if (fields <= 0) return RLM_SQL_ERROR;
 
-	MEM(names = talloc_array(handle, char const *, fields));
+	MEM(names = talloc_array(query_ctx, char const *, fields));
 
 	for (i = 0; i < fields; i++) names[i] = PQfname(conn->result, i);
 	*out = names;
@@ -423,16 +422,17 @@ static sql_rcode_t sql_fields(char const **out[], rlm_sql_handle_t *handle, UNUS
 	return RLM_SQL_OK;
 }
 
-static sql_rcode_t sql_fetch_row(rlm_sql_row_t *out, rlm_sql_handle_t *handle, UNUSED rlm_sql_config_t const *config)
+static unlang_action_t sql_fetch_row(rlm_rcode_t *p_result, UNUSED int *priority, UNUSED request_t *request, void *uctx)
 {
-
-	int records, i, len;
+	fr_sql_query_t		*query_ctx = talloc_get_type_abort(uctx, fr_sql_query_t);
+	rlm_sql_handle_t	*handle = query_ctx->handle;
+	int			records, i, len;
 	rlm_sql_postgres_conn_t *conn = handle->conn;
 
-	*out = NULL;
-	handle->row = NULL;
+	query_ctx->row = NULL;
 
-	if (conn->cur_row >= PQntuples(conn->result)) return RLM_SQL_NO_MORE_ROWS;
+	query_ctx->rcode = RLM_SQL_NO_MORE_ROWS;
+	if (conn->cur_row >= PQntuples(conn->result)) RETURN_MODULE_OK;
 
 	free_result_row(conn);
 
@@ -447,27 +447,17 @@ static sql_rcode_t sql_fetch_row(rlm_sql_row_t *out, rlm_sql_handle_t *handle, U
 			strlcpy(conn->row[i], PQgetvalue(conn->result, conn->cur_row, i), len + 1);
 		}
 		conn->cur_row++;
-		*out = handle->row = conn->row;
+		query_ctx->row = conn->row;
 
-		return RLM_SQL_OK;
+		query_ctx->rcode = RLM_SQL_OK;
 	}
 
-	return RLM_SQL_NO_MORE_ROWS;
+	RETURN_MODULE_OK;
 }
 
-static int sql_num_fields(rlm_sql_handle_t * handle, UNUSED rlm_sql_config_t const *config)
+static sql_rcode_t sql_free_result(fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
-	rlm_sql_postgres_conn_t *conn = handle->conn;
-
-	conn->affected_rows = PQntuples(conn->result);
-	if (conn->result) return PQnfields(conn->result);
-
-	return 0;
-}
-
-static sql_rcode_t sql_free_result(rlm_sql_handle_t * handle, UNUSED rlm_sql_config_t const *config)
-{
-	rlm_sql_postgres_conn_t *conn = handle->conn;
+	rlm_sql_postgres_conn_t *conn = query_ctx->handle->conn;
 
 	if (conn->result != NULL) {
 		PQclear(conn->result);
@@ -479,21 +469,21 @@ static sql_rcode_t sql_free_result(rlm_sql_handle_t * handle, UNUSED rlm_sql_con
 	return 0;
 }
 
-/** Retrieves any errors associated with the connection handle
+/** Retrieves any errors associated with the query context
  *
  * @note Caller will free any memory allocated in ctx.
  *
  * @param ctx to allocate temporary error buffers in.
  * @param out Array of sql_log_entrys to fill.
  * @param outlen Length of out array.
- * @param handle rlm_sql connection handle.
+ * @param query_ctx Query context to retrieve error for.
  * @param config rlm_sql config.
  * @return number of errors written to the #sql_log_entry_t array.
  */
 static size_t sql_error(TALLOC_CTX *ctx, sql_log_entry_t out[], size_t outlen,
-			rlm_sql_handle_t *handle, UNUSED rlm_sql_config_t const *config)
+			fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
-	rlm_sql_postgres_conn_t	*conn = handle->conn;
+	rlm_sql_postgres_conn_t	*conn = query_ctx->handle->conn;
 	char const		*p, *q;
 	size_t			i = 0;
 
@@ -515,9 +505,9 @@ static size_t sql_error(TALLOC_CTX *ctx, sql_log_entry_t out[], size_t outlen,
 	return i;
 }
 
-static int sql_affected_rows(rlm_sql_handle_t * handle, UNUSED rlm_sql_config_t const *config)
+static int sql_affected_rows(fr_sql_query_t *query_ctx, UNUSED rlm_sql_config_t const *config)
 {
-	rlm_sql_postgres_conn_t *conn = handle->conn;
+	rlm_sql_postgres_conn_t *conn = query_ctx->handle->conn;
 
 	return conn->affected_rows;
 }
@@ -680,8 +670,7 @@ rlm_sql_driver_t rlm_sql_postgresql = {
 	.flags				= RLM_SQL_RCODE_FLAGS_ALT_QUERY,
 	.sql_socket_init		= sql_socket_init,
 	.sql_query			= sql_query,
-	.sql_select_query		= sql_select_query,
-	.sql_num_fields			= sql_num_fields,
+	.sql_select_query		= sql_query,
 	.sql_fields			= sql_fields,
 	.sql_fetch_row			= sql_fetch_row,
 	.sql_error			= sql_error,
