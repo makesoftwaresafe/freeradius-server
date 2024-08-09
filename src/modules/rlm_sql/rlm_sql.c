@@ -43,6 +43,8 @@ RCSID("$Id$")
 
 #include "rlm_sql.h"
 
+#define SQL_SAFE_FOR (fr_value_box_safe_for_t)inst->driver
+
 extern module_rlm_t rlm_sql;
 
 static int submodule_parse(TALLOC_CTX *ctx, void *out, void *parent, CONF_ITEM *ci, conf_parser_t const *rule);
@@ -105,19 +107,6 @@ typedef struct {
 	tmpl_t		*group_check_query;	//!< Tmpl to expand to form authorize_group_check_query
 	tmpl_t		*group_reply_query;	//!< Tmpl to expand to form authorize_group_reply_query
 } sql_autz_call_env_t;
-
-static const call_env_method_t authorize_method_env = {
-	FR_CALL_ENV_METHOD_OUT(sql_autz_call_env_t),
-	.env = (call_env_parser_t[]) {
-		{ FR_CALL_ENV_OFFSET("sql_user_name", FR_TYPE_STRING, CALL_ENV_FLAG_CONCAT, sql_autz_call_env_t, user) },
-		{ FR_CALL_ENV_PARSE_ONLY_OFFSET("authorize_check_query", FR_TYPE_STRING, CALL_ENV_FLAG_PARSE_ONLY, sql_autz_call_env_t, check_query) },
-		{ FR_CALL_ENV_PARSE_ONLY_OFFSET("authorize_reply_query", FR_TYPE_STRING, CALL_ENV_FLAG_PARSE_ONLY, sql_autz_call_env_t, reply_query) },
-		{ FR_CALL_ENV_PARSE_ONLY_OFFSET("group_membership_query", FR_TYPE_STRING, CALL_ENV_FLAG_PARSE_ONLY, sql_autz_call_env_t, membership_query) },
-		{ FR_CALL_ENV_PARSE_ONLY_OFFSET("authorize_group_check_query", FR_TYPE_STRING, CALL_ENV_FLAG_PARSE_ONLY, sql_autz_call_env_t, group_check_query) },
-		{ FR_CALL_ENV_PARSE_ONLY_OFFSET("authorize_group_reply_query", FR_TYPE_STRING, CALL_ENV_FLAG_PARSE_ONLY, sql_autz_call_env_t, group_reply_query) },
-		CALL_ENV_TERMINATOR
-	}
-};
 
 static int logfile_call_env_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out, tmpl_rules_t const *t_rules, CONF_ITEM *cc,
 				  call_env_ctx_t const *cec, call_env_parser_t const *rule);
@@ -361,6 +350,20 @@ static int CC_HINT(nonnull(2,3)) sql_xlat_escape(request_t *request, fr_value_bo
 	 */
 	if (fr_value_box_is_safe_for(vb, inst->driver)) return 0;
 
+	/*
+	 *	No need to escape types with inherently safe data
+	 */
+	switch (vb->type) {
+	case FR_TYPE_NUMERIC:
+	case FR_TYPE_IP:
+	case FR_TYPE_ETHERNET:
+		fr_value_box_mark_safe_for(vb, inst->driver);
+		return 0;
+
+	default:
+		break;
+	}
+
 	if (inst->sql_escape_arg) {
 		arg = inst->sql_escape_arg;
 	} else if (thread->sql_escape_arg) {
@@ -413,6 +416,31 @@ static int CC_HINT(nonnull(2,3)) sql_xlat_escape(request_t *request, fr_value_bo
 static int sql_box_escape(fr_value_box_t *vb, void *uctx)
 {
 	return sql_xlat_escape(NULL, vb, uctx);
+}
+
+/** Escape a value to make it SQL safe.
+ *
+@verbatim
+%sql.escape(<value>)
+@endverbatim
+ *
+ * @ingroup xlat_functions
+ */
+static xlat_action_t sql_escape_xlat(UNUSED TALLOC_CTX *ctx, fr_dcursor_t *out, xlat_ctx_t const *xctx,
+				     request_t *request, fr_value_box_list_t *in)
+{
+	rlm_sql_t const		*inst = talloc_get_type_abort(xctx->mctx->mi->data, rlm_sql_t);
+	fr_value_box_t		*vb;
+	rlm_sql_escape_uctx_t	*escape_uctx = NULL;
+
+	while ((vb = fr_value_box_list_pop_head(in))) {
+		if (fr_value_box_is_safe_for(vb, inst->driver)) goto append;
+		if (!escape_uctx) escape_uctx = sql_escape_uctx_alloc(request, inst);
+		sql_box_escape(vb, escape_uctx);
+	append:
+		fr_dcursor_append(out, vb);
+	}
+	return XLAT_ACTION_DONE;
 }
 
 static xlat_action_t sql_xlat_query_resume(TALLOC_CTX *ctx, fr_dcursor_t *out, xlat_ctx_t const *xctx,
@@ -668,7 +696,7 @@ static unlang_action_t mod_map_resume(rlm_rcode_t *p_result, UNUSED int *priorit
 		ret = inst->driver->sql_num_rows(query_ctx, &inst->config);
 		if (ret == 0) {
 			RDEBUG2("Server returned an empty result");
-			rcode = RLM_MODULE_NOOP;
+			rcode = RLM_MODULE_NOTFOUND;
 			goto finish;
 		}
 
@@ -752,7 +780,7 @@ static unlang_action_t mod_map_resume(rlm_rcode_t *p_result, UNUSED int *priorit
 
 	if (rows == 0) {
 		RDEBUG2("SQL query returned no results");
-		rcode = RLM_MODULE_NOOP;
+		rcode = RLM_MODULE_NOTFOUND;
 	}
 
 finish:
@@ -784,12 +812,20 @@ static unlang_action_t mod_map_proc(rlm_rcode_t *p_result, void const *mod_inst,
 	rlm_sql_handle_t	*handle = NULL;
 	fr_value_box_t		*query_head = fr_value_box_list_head(query);
 	sql_map_ctx_t		*map_ctx;
+	fr_value_box_t		*vb = NULL;
+	rlm_sql_escape_uctx_t	*escape_uctx = NULL;
 
 	fr_assert(inst->driver->sql_fields);		/* Should have been caught during validation... */
 
 	if (!query_head) {
 		REDEBUG("Query cannot be (null)");
 		RETURN_MODULE_FAIL;
+	}
+
+	while ((vb = fr_value_box_list_next(query, vb))) {
+		if (fr_value_box_is_safe_for(vb, inst->driver)) continue;
+		if (!escape_uctx) escape_uctx = sql_escape_uctx_alloc(request, inst);
+		sql_box_escape(vb, escape_uctx);
 	}
 
 	if (fr_value_box_list_concat_in_place(request,
@@ -1966,9 +2002,12 @@ static int query_call_env_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out, tm
 	 *	Use module specific escape functions
 	 */
 	our_rules = *t_rules;
-	our_rules.escape.func = inst->box_escape_func;
-	our_rules.escape.safe_for = (fr_value_box_safe_for_t)inst->driver;
-	our_rules.escape.mode = TMPL_ESCAPE_PRE_CONCAT;
+	our_rules.escape = (tmpl_escape_t) {
+		.func = sql_box_escape,
+		.uctx = { .func = { .uctx = inst, .alloc = sql_escape_uctx_alloc }, .type = TMPL_ESCAPE_UCTX_ALLOC_FUNC },
+		.safe_for = SQL_SAFE_FOR,
+		.mode = TMPL_ESCAPE_PRE_CONCAT,
+	};
 	our_rules.literals_safe_for = our_rules.escape.safe_for;
 
 	count = cf_pair_count(subcs, "query");
@@ -2235,17 +2274,41 @@ static int mod_bootstrap(module_inst_ctx_t const *mctx)
 		.required = true,
 		.concat = true,
 		.func = sql_xlat_escape,
-		.safe_for = (fr_value_box_safe_for_t)inst->driver,
+		.safe_for = SQL_SAFE_FOR,
 		.uctx = uctx
 	};
 	sql_xlat_arg[1] = (xlat_arg_parser_t)XLAT_ARG_PARSER_TERMINATOR;
 
 	xlat_func_args_set(xlat, sql_xlat_arg);
 
+	if (unlikely(!(xlat = module_rlm_xlat_register(boot, mctx, "escape", sql_escape_xlat, FR_TYPE_STRING)))) return -1;
+	sql_xlat_arg = talloc_zero_array(xlat, xlat_arg_parser_t, 2);
+	sql_xlat_arg[0] = (xlat_arg_parser_t){
+		.type = FR_TYPE_STRING,
+		.variadic = true,
+		.concat = true,
+	};
+	sql_xlat_arg[1] = (xlat_arg_parser_t)XLAT_ARG_PARSER_TERMINATOR;
+	xlat_func_args_set(xlat, sql_xlat_arg);
+	xlat_func_flags_set(xlat, XLAT_FUNC_FLAG_PURE);
+	xlat_func_safe_for_set(xlat, SQL_SAFE_FOR);
+
+	if (unlikely(!(xlat = module_rlm_xlat_register(boot, mctx, "safe", xlat_transparent, FR_TYPE_STRING)))) return -1;
+	sql_xlat_arg = talloc_zero_array(xlat, xlat_arg_parser_t, 2);
+	sql_xlat_arg[0] = (xlat_arg_parser_t){
+		.type = FR_TYPE_STRING,
+		.variadic = true,
+		.concat = true
+	};
+	sql_xlat_arg[1] = (xlat_arg_parser_t)XLAT_ARG_PARSER_TERMINATOR;
+	xlat_func_args_set(xlat, sql_xlat_arg);
+	xlat_func_flags_set(xlat, XLAT_FUNC_FLAG_PURE);
+	xlat_func_safe_for_set(xlat, SQL_SAFE_FOR);
+
 	/*
 	 *	Register the SQL map processor function
 	 */
-	if (inst->driver->sql_fields) map_proc_register(mctx->mi->boot, inst, mctx->mi->name, mod_map_proc, sql_map_verify, 0, (fr_value_box_safe_for_t)inst->driver);
+	if (inst->driver->sql_fields) map_proc_register(mctx->mi->boot, inst, mctx->mi->name, mod_map_proc, sql_map_verify, 0, SQL_SAFE_FOR);
 
 	return 0;
 }
@@ -2283,6 +2346,52 @@ static int mod_thread_detach(module_thread_inst_ctx_t const *mctx)
 
 	return 0;
 }
+
+/** Custom parser for sql call env queries
+ *
+ * Needed as the escape function needs to reference the correct SQL driver
+ */
+static int call_env_parse(TALLOC_CTX *ctx, void *out, tmpl_rules_t const *t_rules, CONF_ITEM *ci,
+			  call_env_ctx_t const *cec, UNUSED call_env_parser_t const *rule)
+{
+	rlm_sql_t const		*inst = talloc_get_type_abort_const(cec->mi->data, rlm_sql_t);
+	tmpl_t			*parsed_tmpl;
+	CONF_PAIR const		*to_parse = cf_item_to_pair(ci);
+	tmpl_rules_t		our_rules = *t_rules;
+
+	/*
+	 *	Set the sql module instance data as the uctx for escaping
+	 *	and use the same "safe_for" as the sql module.
+	 */
+	our_rules.escape.func = sql_box_escape;
+	our_rules.escape.uctx.func.uctx = inst;
+	our_rules.escape.safe_for = SQL_SAFE_FOR;
+	our_rules.literals_safe_for = SQL_SAFE_FOR;
+
+	if (tmpl_afrom_substr(ctx, &parsed_tmpl,
+			      &FR_SBUFF_IN(cf_pair_value(to_parse), talloc_array_length(cf_pair_value(to_parse)) - 1),
+			      cf_pair_value_quote(to_parse), NULL, &our_rules) < 0) return -1;
+	*(void **)out = parsed_tmpl;
+	return 0;
+}
+
+#define QUERY_ESCAPE .pair.escape = { \
+	.mode = TMPL_ESCAPE_PRE_CONCAT, \
+	.uctx = { .func = { .alloc = sql_escape_uctx_alloc }, .type = TMPL_ESCAPE_UCTX_ALLOC_FUNC }, \
+}, .pair.func = call_env_parse
+
+static const call_env_method_t authorize_method_env = {
+	FR_CALL_ENV_METHOD_OUT(sql_autz_call_env_t),
+	.env = (call_env_parser_t[]) {
+		{ FR_CALL_ENV_OFFSET("sql_user_name", FR_TYPE_STRING, CALL_ENV_FLAG_CONCAT, sql_autz_call_env_t, user) },
+		{ FR_CALL_ENV_PARSE_ONLY_OFFSET("authorize_check_query", FR_TYPE_STRING, CALL_ENV_FLAG_PARSE_ONLY, sql_autz_call_env_t, check_query), QUERY_ESCAPE },
+		{ FR_CALL_ENV_PARSE_ONLY_OFFSET("authorize_reply_query", FR_TYPE_STRING, CALL_ENV_FLAG_PARSE_ONLY, sql_autz_call_env_t, reply_query), QUERY_ESCAPE },
+		{ FR_CALL_ENV_PARSE_ONLY_OFFSET("group_membership_query", FR_TYPE_STRING, CALL_ENV_FLAG_PARSE_ONLY, sql_autz_call_env_t, membership_query), QUERY_ESCAPE },
+		{ FR_CALL_ENV_PARSE_ONLY_OFFSET("authorize_group_check_query", FR_TYPE_STRING, CALL_ENV_FLAG_PARSE_ONLY, sql_autz_call_env_t, group_check_query), QUERY_ESCAPE },
+		{ FR_CALL_ENV_PARSE_ONLY_OFFSET("authorize_group_reply_query", FR_TYPE_STRING, CALL_ENV_FLAG_PARSE_ONLY, sql_autz_call_env_t, group_reply_query), QUERY_ESCAPE },
+		CALL_ENV_TERMINATOR
+	}
+};
 
 /* globally exported name */
 module_rlm_t rlm_sql = {

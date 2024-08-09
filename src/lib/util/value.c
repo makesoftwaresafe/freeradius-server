@@ -663,7 +663,16 @@ int8_t fr_value_box_cmp(fr_value_box_t const *a, fr_value_box_t const *b)
 		}
 
 		if (length) {
-			int cmp = memcmp(a->datum.ptr, b->datum.ptr, length);
+			int cmp;
+
+			/*
+			 *	Use constant-time comparisons for secret values.
+			 */
+			if (a->secret || b->secret) {
+				cmp = fr_digest_cmp(a->datum.ptr, b->datum.ptr, length);
+			} else {
+				cmp = memcmp(a->datum.ptr, b->datum.ptr, length);
+			}
 			if (cmp != 0) return CMP(cmp, 0);
 		}
 
@@ -5409,7 +5418,7 @@ ssize_t fr_value_box_print(fr_sbuff_t *out, fr_value_box_t const *data, fr_sbuff
 
 		if (data->enumv) res = data->enumv->flags.flag_time_res;
 
-		FR_SBUFF_RETURN(fr_unix_time_to_str, &our_out, data->vb_date, res);
+		FR_SBUFF_RETURN(fr_unix_time_to_str, &our_out, data->vb_date, res, true);
 		break;
 	}
 

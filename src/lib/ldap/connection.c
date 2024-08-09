@@ -138,6 +138,13 @@ DIAG_ON(unused-macros)
 	keepalive = fr_time_delta_to_sec(config->keepalive_interval);
 	do_ldap_option(LDAP_OPT_X_KEEPALIVE_INTERVAL, "keepalive_interval", &keepalive);
 
+	if (config->sasl_secprops) do_ldap_option(LDAP_OPT_X_SASL_SECPROPS, "sasl_secprops", config->sasl_secprops);
+
+	/*
+	 *	Everything after this point is TLS related - so don't set if TLS not in use.
+	 */
+	if (!config->tls_mode && !config->start_tls) return 0;
+
 	/*
 	 *	Set all of the TLS options
 	 */
@@ -169,10 +176,8 @@ DIAG_ON(unused-macros)
 	is_server = 0;
 	do_ldap_option(LDAP_OPT_X_TLS_NEWCTX, "new TLS context", &is_server);
 
-	if (config->sasl_secprops) do_ldap_option(LDAP_OPT_X_SASL_SECPROPS, "sasl_secprops", config->sasl_secprops);
-
 	if (config->start_tls) {
-		if (config->port == 636) {
+		if (config->port == LDAPS_PORT) {
 			WARN("Told to Start TLS on LDAPS port this will probably fail, please correct the "
 			     "configuration");
 		}
@@ -522,103 +527,7 @@ static void ldap_request_fail(request_t *request, void *preq, UNUSED void *rctx,
 	if (request) unlang_interpret_mark_runnable(request);
 }
 
-/** I/O read function
- *
- * Underlying FD is now readable - call the trunk to read any pending requests.
- *
- * @param[in] el	The event list signalling.
- * @param[in] fd	that's now readable.
- * @param[in] flags	describing the read event.
- * @param[in] uctx	The trunk connection handle.
- */
-static void ldap_conn_readable(UNUSED fr_event_list_t *el, UNUSED int fd, UNUSED int flags, void *uctx)
-{
-	trunk_connection_t	*tconn = talloc_get_type_abort(uctx, trunk_connection_t);
-
-	trunk_connection_signal_readable(tconn);
-}
-
-
-/** I/O write function
- *
- * Underlying FD is now writable - call the trunk to write any pending requests.
- *
- * @param[in] el	The event list signalling.
- * @param[in] fd	that's now writable.
- * @param[in] flags	describing the write event.
- * @param[in] uctx	The trunk connection handle
- */
-static void ldap_conn_writable(UNUSED fr_event_list_t *el, UNUSED int fd, UNUSED int flags, void *uctx)
-{
-	trunk_connection_t	*tconn = talloc_get_type_abort(uctx, trunk_connection_t);
-
-	trunk_connection_signal_writable(tconn);
-}
-
-
-/** I/O error function
- *
- * The event loop signalled that a fatal error occurec on this connection.
- *
- * @param[in] el	The event list signalling.
- * @param[in] fd	that errored.
- * @param[in] flags	EL flags.
- * @param[in] fd_errno	The nature of the error.
- * @param[in] uctx	The trunk connection handle
- */
-static void ldap_conn_error(UNUSED fr_event_list_t *el, UNUSED int fd, UNUSED int flags, int fd_errno, void *uctx)
-{
-	trunk_connection_t	*tconn = talloc_get_type_abort(uctx, trunk_connection_t);
-
-	ERROR("%s - Connection failed: %s", tconn->conn->name, fr_syserror(fd_errno));
-
-	connection_signal_reconnect(tconn->conn, CONNECTION_FAILED);
-}
-
-/** Setup callbacks requested by LDAP trunk connections
- *
- * @param[in] tconn	Trunk handle.
- * @param[in] conn	Individual connection callbacks are to be installed for.
- * @param[in] el	The event list to install events in.
- * @param[in] notify_on	The types of event the trunk wants to be notified on.
- * @param[in] uctx	Context provided to trunk_alloc.
- */
-static void ldap_trunk_connection_notify(trunk_connection_t *tconn, connection_t *conn,
-					 fr_event_list_t *el,
-					 trunk_connection_event_t notify_on, UNUSED void *uctx)
-{
-	fr_ldap_connection_t	*ldap_conn = talloc_get_type_abort(conn->h, fr_ldap_connection_t);
-	fr_event_fd_cb_t	read_fn = NULL;
-	fr_event_fd_cb_t	write_fn = NULL;
-
-	switch (notify_on) {
-	case TRUNK_CONN_EVENT_NONE:
-		fr_event_fd_delete(el, ldap_conn->fd, FR_EVENT_FILTER_IO);
-		return;
-
-	case TRUNK_CONN_EVENT_READ:
-		read_fn = ldap_conn_readable;
-		break;
-
-	case TRUNK_CONN_EVENT_WRITE:
-		write_fn = ldap_conn_writable;
-		break;
-
-	case TRUNK_CONN_EVENT_BOTH:
-		read_fn = ldap_conn_readable;
-		write_fn = ldap_conn_writable;
-		break;
-	}
-
-	if (fr_event_fd_insert(ldap_conn, NULL, el, ldap_conn->fd,
-			       read_fn,
-			       write_fn,
-			       ldap_conn_error,
-			       tconn) < 0) {
-		PERROR("Failed inserting FD event");
-		trunk_connection_signal_reconnect(tconn, CONNECTION_FAILED);
-	}
-}
+TRUNK_NOTIFY_FUNC(ldap_trunk_connection_notify, fr_ldap_connection_t)
 
 /** Allocate an LDAP trunk connection
  *

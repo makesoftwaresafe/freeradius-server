@@ -751,7 +751,7 @@ static xlat_action_t ldap_xlat(UNUSED TALLOC_CTX *ctx, UNUSED fr_dcursor_t *out,
 
 	XLAT_ARGS(in, &uri);
 
-	if (ldap_xlat_uri_parse(&ldap_url, &host, &free_host, request, handle_config->server, uri) < 0) return -1;
+	if (ldap_xlat_uri_parse(&ldap_url, &host, &free_host, request, handle_config->server, uri) < 0) return XLAT_ACTION_FAIL;
 
 	/*
 	 *	Nothing, empty string, "*" string, or got 2 things, die.
@@ -1339,13 +1339,11 @@ static unlang_action_t mod_map_proc(rlm_rcode_t *p_result, void const *mod_inst,
 	ldap_map_ctx_t		*map_ctx;
 	char			*host_url, *host = NULL;
 
-	/* FIXME - We need a way of markup up literal */
-/*
- *	if (fr_uri_escape_list(url, ldap_uri_parts, NULL) < 0) {
- *		RPERROR("Failed to escape LDAP URI");
- *		RETURN_MODULE_FAIL;
- *	}
- */
+	if (fr_uri_escape_list(url, ldap_uri_parts, NULL) < 0) {
+		RPERROR("Failed to escape LDAP URI");
+		RETURN_MODULE_FAIL;
+	}
+
 	url_head = fr_value_box_list_head(url);
 	if (!url_head) {
 		REDEBUG("LDAP URL cannot be (null)");

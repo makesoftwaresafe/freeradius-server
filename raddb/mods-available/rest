@@ -60,6 +60,10 @@ rest {
 		#  is not known ahead of time (using a URL from an external source), and/or the CA used
 		#  to sign the HTTPS server certificate is unknown.
 		#
+		#  If not set, then whatever libcurl has as its default will be used, which typically
+		#  will be the operating system's set of trusted CAs.  This will be visible in the debug
+		#  output when FreeRADIUS starts.
+		#
 #		ca_path	             = "${certdir}"
 
 		#
@@ -130,16 +134,21 @@ rest {
 		#  Default is `no`
 		#
 #		extract_cert_attrs = no
+
+		#
+		#  keylog_file:: Write out session keys in SSLKEYLOGFILE format
+		#
+		#  The SSLKEYLOGFILE format is specified here https://www.ietf.org/archive/id/draft-thomson-tls-keylogfile-00.html.
+		#
+		#  The contents of the keylog file allows wireshark captures to be decrypted for debugging purposes.
+		#
+		#  Note:: keylog_file is not expanded at runtime.
+		#
+#		keylog_file = '/path/to/keylog_file'
 	}
 
 	#
-	#  connect_uri:: It will open a connection to the server specified in `connect_uri`
-	#  to populate the connection cache, ready for the first request.
-	#
-	#  If you wish to disable this pre-caching and reachability check,
-	#  comment out the configuration item below.
-	#
-	#  WARNING: The server will not start if the server specified is unreachable.
+	#  connect_uri:: Base URI used to avoid repetition in sections below.
 	#
 	connect_uri = "http://127.0.0.1:9090/"
 
@@ -349,6 +358,8 @@ rest {
 	#
 	#  ### Authorize { ... }
 	#
+	#  Default action when called in `recv` sections except `recv Accounting-Request`.
+	#
 	#  [options="header,autowidth"]
 	#  |===
 	#  | Code | Meaning      | Process body? | Module code
@@ -363,24 +374,32 @@ rest {
 	#  |===
 	#
 	authorize {
-		uri = "${..connect_uri}/user/%{User-Name}/mac/%{Called-Station-ID}?section=authorize"
-		method = 'GET'
+		request {
+			uri = "${...connect_uri}/user/%{User-Name}/mac/%{Called-Station-ID}?section=authorize"
+			method = 'GET'
+		}
 		tls = ${..tls}
 	}
 
 	#
 	#  ### Authenticate { ... }
 	#
-	#  Same as `Authorize { ... }`
+	#  Default action when called in `authenticate` sections.
+	#
+	#  Return codes handled the same as `Authorize { ... }`
 	#
 	authenticate {
-		uri = "${..connect_uri}/user/%{User-Name}/mac/%{Called-Station-ID}?section=authenticate"
-		method = 'GET'
+		request {
+			uri = "${...connect_uri}/user/%{User-Name}/mac/%{Called-Station-ID}?section=authenticate"
+			method = 'GET'
+		}
 		tls = ${..tls}
 	}
 
 	#
 	#  ### Accounting { ... }
+	#
+	#  Default action when called in `recv Accounting-Request` or `accounting` sections.
 	#
 	#  [options="header,autowidth"]
 	#  |===
@@ -392,19 +411,25 @@ rest {
 	#  |===
 	#
 	accounting {
-		uri = "${..connect_uri}/user/%{User-Name}/sessions/%{Acct-Unique-Session-ID}"
-		method = 'POST'
+		request {
+			uri = "${...connect_uri}/user/%{User-Name}/sessions/%{Acct-Unique-Session-ID}"
+			method = 'POST'
+		}
 		tls = ${..tls}
 	}
 
 	#
 	#  ### Post-Auth { ... }
 	#
-	#  Same as `Accounting { ... }`
+	#  Default action when called in `send` sections.
+	#
+	#  Return codes handled the same as `Accounting { ... }`
 	#
 	post-auth {
-		uri = "${..connect_uri}/user/%{User-Name}/mac/%{Called-Station-ID}?action=post-auth"
-		method = 'POST'
+		request {
+			uri = "${...connect_uri}/user/%{User-Name}/mac/%{Called-Station-ID}?action=post-auth"
+			method = 'POST'
+		}
 		tls = ${..tls}
 	}
 

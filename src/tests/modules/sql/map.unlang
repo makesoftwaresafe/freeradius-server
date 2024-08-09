@@ -12,7 +12,7 @@ map sql 'SELECT * FROM radusergroup WHERE priority <= 1' {
 	&control.Filter-Id	:= 'groupname'
 	&control.NAS-Port	:= 'priority'
 }
-if (!noop) {
+if (!notfound) {
 	test_fail
 }
 
@@ -225,7 +225,7 @@ if !(&control.NAS-Port == 0) {
 	test_fail
 }
 
-&sqlcmd := "SELECT * FROM radusergroup WHERE priority <= 1 AND username = '%{User-Name}'"
+&sqlcmd := %sql.safe("SELECT * FROM radusergroup WHERE priority <= 1 AND username = '%sql.escape(%{User-Name})'")
 
 # Clear the control list
 &control -= &User-Name[*]
@@ -283,6 +283,15 @@ if !(&control.Filter-Id == 'bar') {
 }
 
 if !(&control.NAS-Port == 0) {
+	test_fail
+}
+
+# NAS-Identifier has un-safe SQL characters - check escaping works
+map sql "SELECT attribute FROM radcheck WHERE username = '%{NAS-Identifier}'" {
+	&control.Filter-Id	= 'attribute'
+}
+
+if (!notfound) {
 	test_fail
 }
 
