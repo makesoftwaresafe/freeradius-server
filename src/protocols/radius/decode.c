@@ -39,25 +39,25 @@ RCSID("$Id$")
 #include <freeradius-devel/protocol/radius/rfc6929.h>
 #include <freeradius-devel/protocol/radius/rfc7268.h>
 
-static void memcpy_bounded(void * restrict dst, const void * restrict src, size_t n, const void * restrict end)
+static bool  memcpy_bounded(void * restrict dst, const void * restrict src, size_t n, const void * restrict end)
 {
-	size_t len = n;
+	size_t len;
 
 	if (!fr_cond_assert(n <= 65535)) {
-		return;
+		return false;
 	}
 
 	if (!fr_cond_assert(src <= end)) {
-		return;
+		return false;
 	}
 
-	if (len == 0) return;
+	if (n == 0) return true;
 
-	if (!fr_cond_assert(((uint8_t const * restrict) src + len) <= (uint8_t const * restrict) end)) {
-		len = (uint8_t const * restrict) end - (uint8_t const * restrict) src;
-	}
+	len = ((uint8_t const * restrict) end - (uint8_t const * restrict) src);
+	if (n > len) return false;
 
-	memcpy(dst, src, len);
+	memcpy(dst, src, n);
+	return true;
 }
 
 
@@ -67,7 +67,7 @@ static void memcpy_bounded(void * restrict dst, const void * restrict src, size_
  * initial intermediate value, to differentiate it from the
  * above.
  */
-static ssize_t fr_radius_decode_tunnel_password(uint8_t *passwd, size_t *pwlen, fr_radius_decode_ctx_t *packet_ctx)
+static ssize_t fr_radius_decode_tunnel_password(uint8_t passwd[static 256], size_t *pwlen, fr_radius_decode_ctx_t *packet_ctx)
 {
 	fr_md5_ctx_t	*md5_ctx, *md5_ctx_old;
 	uint8_t		digest[RADIUS_AUTH_VECTOR_LENGTH];
@@ -188,12 +188,11 @@ static ssize_t fr_radius_decode_tunnel_password(uint8_t *passwd, size_t *pwlen, 
 /** Decode password
  *
  */
-static ssize_t fr_radius_decode_password(char *passwd, size_t pwlen, fr_radius_decode_ctx_t *packet_ctx)
+static ssize_t fr_radius_decode_password(uint8_t passwd[static 256], size_t pwlen, fr_radius_decode_ctx_t *packet_ctx)
 {
 	fr_md5_ctx_t	*md5_ctx, *md5_ctx_old;
 	uint8_t		digest[RADIUS_AUTH_VECTOR_LENGTH];
-	int		i;
-	size_t		n;
+	size_t		i, n;
 
 	fr_assert(pwlen <= RADIUS_MAX_STRING_LENGTH);
 
@@ -212,6 +211,10 @@ static ssize_t fr_radius_decode_password(char *passwd, size_t pwlen, fr_radius_d
 	 *	The inverse of the code above.
 	 */
 	for (n = 0; n < pwlen; n += AUTH_PASS_LEN) {
+		size_t left = (pwlen - n);
+
+		if (left > AUTH_PASS_LEN) left = AUTH_PASS_LEN;
+
 		if (n == 0) {
 			fr_md5_update(md5_ctx, packet_ctx->request_authenticator, RADIUS_AUTH_VECTOR_LENGTH);
 			fr_md5_final(digest, md5_ctx);
@@ -229,7 +232,7 @@ static ssize_t fr_radius_decode_password(char *passwd, size_t pwlen, fr_radius_d
 			}
 		}
 
-		for (i = 0; i < AUTH_PASS_LEN; i++) passwd[i + n] ^= digest[i];
+		for (i = 0; i < left; i++) passwd[i + n] ^= digest[i];
 	}
 
 	fr_md5_ctx_free_from_list(&md5_ctx);
@@ -237,7 +240,7 @@ static ssize_t fr_radius_decode_password(char *passwd, size_t pwlen, fr_radius_d
 
  done:
 	passwd[pwlen] = '\0';
-	return strlen(passwd);
+	return strlen((char *) passwd);
 }
 
 /** Check if a set of RADIUS formatted TLVs are OK
@@ -387,13 +390,14 @@ static ssize_t decode_concat(TALLOC_CTX *ctx, fr_pair_list_t *list,
 	PAIR_ALLOCED(vp);
 
 	if (fr_pair_value_mem_alloc(vp, &p, total, true) != 0) {
+	fail:
 		talloc_free(vp);
 		return -1;
 	}
 
 	ptr = data;
 	while (ptr < end) {
-		memcpy_bounded(p, ptr + 2, ptr[1] - 2, end);
+		if (!memcpy_bounded(p, ptr + 2, ptr[1] - 2, end)) goto fail;
 		p += ptr[1] - 2;
 		ptr += ptr[1];
 	}
@@ -915,7 +919,10 @@ static ssize_t decode_extended_fragments(TALLOC_CTX *ctx, fr_pair_list_t *out,
 	frag = attr;
 
 	while (fragments >  0) {
-		if (frag[1] > 4) memcpy_bounded(tail, frag + 4, frag[1] - 4, end);
+		if ((frag[1] > 4) && !memcpy_bounded(tail, frag + 4, frag[1] - 4, end)) {
+			talloc_free(head);
+			return -1;
+		}
 		tail += frag[1] - 4;
 		frag += frag[1];
 		fragments--;
@@ -1239,7 +1246,10 @@ static ssize_t decode_wimax(TALLOC_CTX *ctx, fr_pair_list_t *out,
 	 */
 	attr = data;
 	while (attr < end) {
-		memcpy_bounded(tail, attr + 4 + 3, attr[4 + 1] - 3, end);
+		if (!memcpy_bounded(tail, attr + 4 + 3, attr[4 + 1] - 3, end)) {
+			talloc_free(head);
+			return -1;
+		}
 		tail += attr[4 + 1] - 3;
 		attr += 4 + attr[4 + 1]; /* skip VID+WiMax header */
 		attr += 2;		 /* skip Vendor-Specific header */
@@ -1618,9 +1628,9 @@ ssize_t fr_radius_decode_pair_value(TALLOC_CTX *ctx, fr_pair_list_t *out,
 		 *	old-style format.  Extended attributes CANNOT
 		 *	be encrypted.
 		 */
-		if (attr_len > 253) goto raw;
+		if (data_len > 253) goto raw;
 
-		if (p == data) memcpy(buffer, p, attr_len);
+		if (p == data) memcpy(buffer, p, data_len);
 		p = buffer;
 
 		switch (encrypt) { /* can't be tagged */
@@ -1630,7 +1640,7 @@ ssize_t fr_radius_decode_pair_value(TALLOC_CTX *ctx, fr_pair_list_t *out,
 		case RADIUS_FLAG_ENCRYPT_USER_PASSWORD:
 			if (!packet_ctx->request_authenticator) goto raw;
 
-			fr_radius_decode_password((char *)buffer, attr_len, packet_ctx);
+			fr_radius_decode_password(buffer, data_len, packet_ctx);
 
 			/*
 			 *	MS-CHAP-MPPE-Keys are 24 octets, and
