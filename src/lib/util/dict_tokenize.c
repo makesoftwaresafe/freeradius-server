@@ -3016,6 +3016,7 @@ post_option:
 	}
 
 	dict = dict_alloc(dict_gctx);
+	if (!dict) return -1;
 
 	/*
 	 *	Try to load protocol-specific validation routines.
