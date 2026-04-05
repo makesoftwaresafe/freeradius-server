@@ -1372,7 +1372,7 @@ done:
 
 	fr_dict_free(&dict, __FILE__);
 
-	if (inputfp != stdin) fclose(inputfp);
+	if (inputfp && (inputfp != stdin)) fclose(inputfp);
 
 	if (radmin_log.dst == L_DST_FILES) close(radmin_log.fd);
 
