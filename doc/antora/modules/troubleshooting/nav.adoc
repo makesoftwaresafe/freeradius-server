@@ -31,6 +31,7 @@
 **** xref:network/attribute_header.adoc[Attribute header overflows the packet]
 **** xref:network/decode_failure.adoc[Failure decoding a packet]
 **** xref:network/message_authenticator_length.adoc[Message Authenticator has invalid length]
+**** xref:network/message_authenticator_too_many.adoc[Multiple Message-Authenticators is invalid]
 
 
 ** xref:user.adoc[User Management]

@@ -525,6 +525,7 @@ char const *fr_radius_decode_fail_reason[FR_RADIUS_FAIL_MAX + 1] = {
 	[FR_RADIUS_FAIL_MA_INVALID_LENGTH] = "Message-Authenticator has invalid length",
 	[FR_RADIUS_FAIL_MA_MISSING] = "Message-Authenticator is required for this packet, but it is missing",
 	[FR_RADIUS_FAIL_MA_INVALID] = "Message-Authenticator fails verification. shared secret is incorrect",
+	[FR_RADIUS_FAIL_MA_TOO_MANY] = "More than one Message-Authenticator in a packet is invalid",
 	[FR_RADIUS_FAIL_PROXY_STATE_MISSING_MA] = "The packet contains Proxy-State, but no Message-Authenticator",
 
 	[FR_RADIUS_FAIL_VERIFY] = "packet fails verification, shared secret is incorrect",
@@ -738,22 +739,31 @@ bool fr_radius_ok(uint8_t const *packet, size_t *packet_len_p,
 				failure = FR_RADIUS_FAIL_MA_INVALID_LENGTH;
 				goto finish;
 			}
+
+			/*
+			 *	Can't have two of them.
+			 */
+			if (seen_ma) {
+				failure = FR_RADIUS_FAIL_MA_TOO_MANY;
+				goto finish;
+			}
+
 			seen_ma = true;
 			break;
 		}
 
 		attr += attr[1];
 		num_attributes++;	/* seen one more attribute */
-	}
 
-	/*
-	 *	If we're configured to look for a maximum number of
-	 *	attributes, and we've seen more than that maximum,
-	 *	then throw the packet away, as a possible DoS.
-	 */
-	if (num_attributes > max_attributes) {
-		failure = FR_RADIUS_FAIL_TOO_MANY_ATTRIBUTES;
-		goto finish;
+		/*
+		 *	If we're configured to look for a maximum number of
+		 *	attributes, and we've seen more than that maximum,
+		 *	then throw the packet away, as a possible DoS.
+		 */
+		if (num_attributes > max_attributes) {
+			failure = FR_RADIUS_FAIL_TOO_MANY_ATTRIBUTES;
+			goto finish;
+		}
 	}
 
 	/*
@@ -780,11 +790,20 @@ finish:
 }
 
 
-/** Verify a request / response packet
+/** Verify the signature of a request / response packet
  *
- *  This function does its work by calling fr_radius_sign(), and then
- *  comparing the signature in the packet with the one we calculated.
- *  If they differ, there's a problem.
+ *  This function does its work by calling fr_radius_sign(), and then comparing the signature in the packet
+ *  with the one we calculated.  If they differ, there's a problem.
+ *
+ *  @note - We rely on the security of the shared secret for UDP and TCP transport.  For TLS transport, we
+ *  rely on TLS to make the RADIUS packets both secure and private.
+ *
+ *  @note - The BlastRADIUS mitigations require that "require_message_authenticator" and "limit_proxy_state"
+ *  are used only for Access-Request packets.  These mitigations MUST NOT be used for any any other packet
+ *  codes.
+ *
+ *  The caller should have called fr_radius_packet_ok() to see if the packet is well-formed, at least for the
+ *  base RFC attributes.
  *
  * @param[in] packet				the raw RADIUS packet (request or response)
  * @param[in] vector				the original packet vector
@@ -804,7 +823,7 @@ int fr_radius_verify(uint8_t *packet, uint8_t const *vector,
 	bool		found_proxy_state = false;
 	int		rcode;
 	int		code;
-	uint8_t		*msg, *end;
+	uint8_t		*attr, *msg, *end;
 	size_t		packet_len = fr_nbo_to_uint16(packet + 2);
 	uint8_t		request_authenticator[RADIUS_AUTH_VECTOR_LENGTH];
 	uint8_t		message_authenticator[RADIUS_AUTH_VECTOR_LENGTH];
@@ -820,6 +839,11 @@ int fr_radius_verify(uint8_t *packet, uint8_t const *vector,
 		return -FR_RADIUS_FAIL_UNKNOWN_PACKET_CODE;
 	}
 
+	/*
+	 *	RFC 5997 says that all Status-Server packets MUST contain Message-Authenticator.
+	 */
+	require_message_authenticator |= (code == FR_RADIUS_CODE_STATUS_SERVER);
+
 	memcpy(request_authenticator, packet + 4, sizeof(request_authenticator));
 
 	/*
@@ -827,54 +851,89 @@ int fr_radius_verify(uint8_t *packet, uint8_t const *vector,
 	 *	calculated before we calculate the Request
 	 *	Authenticator or the Response Authenticator.
 	 */
-	msg = packet + RADIUS_HEADER_LENGTH;
+	msg = NULL;
+	attr = packet + RADIUS_HEADER_LENGTH;
 	end = packet + packet_len;
 
-	while (msg < end) {
-		if ((end - msg) < 2) goto invalid_attribute;
+	/*
+	 *	See what we need to do in order to verify the packet.
+	 *
+	 *	Note that fr_radius_packet_ok() also does these checks, but it's worth re-doing them here so
+	 *	that potential API mis-use is safe.  i.e. we do "defense in depth".
+	 */
+	while (attr < end) {
+		if ((end - attr) < 2) goto invalid_attribute;
 
-		if (msg[0] != FR_MESSAGE_AUTHENTICATOR) {
-			if (msg[1] < 2) goto invalid_attribute;
+		if (attr[1] < 2) goto invalid_attribute;
 
-			/*
-			 *	If we're not allowing Proxy-State without
-			 *	Message-authenticator, we need to record
-			 *	the fact we found Proxy-State.
-			 */
-			if (limit_proxy_state && (msg[0] == FR_PROXY_STATE)) found_proxy_state = true;
-
-			if ((msg + msg[1]) > end) {
-			invalid_attribute:
-				fr_strerror_printf("invalid attribute at offset %zd", msg - packet);
-				return -FR_RADIUS_FAIL_INVALID_ATTRIBUTE;
-			}
-			msg += msg[1];
-			continue;
-		}
-
-		if (msg[1] < 18) {
-			fr_strerror_const("too small Message-Authenticator");
-			return -FR_RADIUS_FAIL_MA_INVALID_LENGTH;
+		if ((attr + attr[1]) > end) {
+		invalid_attribute:
+			fr_strerror_printf("invalid attribute at offset %zd", attr - packet);
+			return -FR_RADIUS_FAIL_INVALID_ATTRIBUTE;
 		}
 
 		/*
-		 *	Found it, save a copy.
+		 *	If there's no Message-Authenticator, then we need to check Proxy-State, but only if
+		 *	the caller asked us to limit Proxy-State.
 		 */
-		memcpy(message_authenticator, msg + 2, sizeof(message_authenticator));
-		found_message_authenticator = true;
-		break;
+		if (attr[0] == FR_PROXY_STATE) {
+			found_proxy_state = limit_proxy_state;
+			goto next;
+		}
+
+		/*
+		 *	Check the contents of Message-Authenticator
+		 */
+		if (attr[0] == FR_MESSAGE_AUTHENTICATOR) {
+			if (found_message_authenticator) {
+				fr_strerror_const("Multiple Message-Authenticators are invalid");
+				return -FR_RADIUS_FAIL_MA_TOO_MANY;
+			}
+
+
+			if (attr[1] != 18) {
+				fr_strerror_const("too small Message-Authenticator");
+				return -FR_RADIUS_FAIL_MA_INVALID_LENGTH;
+			}
+
+			/*
+			 *	If we have found Message-Authenticator, then we verify that.  We also can stop
+			 *	processing the packet, as we don't care about the contents of Proxy-State.
+			 */
+			memcpy(message_authenticator, attr + 2, sizeof(message_authenticator));
+			found_message_authenticator = true;
+			msg = attr;
+			goto next;
+		}
+
+		/*
+		 *	RFC 3579 Section 3.1 requires Message-Authenticator if the packet contains
+		 *	EAP-Message.
+		 */
+		if (attr[0] == FR_EAP_MESSAGE) require_message_authenticator = true;
+
+	next:
+		attr += attr[1];
 	}
 
-	if (packet[0] == FR_RADIUS_CODE_ACCESS_REQUEST) {
+	/*
+	 *	Enforce limit_proxy_state for Access-Request packets.
+	 */
+	if (code == FR_RADIUS_CODE_ACCESS_REQUEST) {
 		if (limit_proxy_state && found_proxy_state && !found_message_authenticator) {
 			fr_strerror_const("Proxy-State is not allowed without Message-Authenticator");
 			return -FR_RADIUS_FAIL_PROXY_STATE_MISSING_MA;
 		}
+	}
 
-	    	if (require_message_authenticator && !found_message_authenticator) {
-			fr_strerror_const("Access-Request is missing the required Message-Authenticator attribute");
-			return -FR_RADIUS_FAIL_MA_MISSING;
-		}
+	/*
+	 *	The require_message_authenticator flag can be set for any of these packet types.  For other
+	 *	packet types, we check it if it exists, but we allow packets to not contain it.
+	 */
+	if (require_message_authenticator && !found_message_authenticator) {
+		fr_strerror_printf("%s is missing the required Message-Authenticator attribute",
+				   fr_radius_packet_name[code]);
+		return -FR_RADIUS_FAIL_MA_MISSING;
 	}
 
 	/*
@@ -898,7 +957,7 @@ int fr_radius_verify(uint8_t *packet, uint8_t const *vector,
 	 *	message authenticators are the same, so we don't
 	 *	need to do anything.
 	 */
-	if ((msg < end) &&
+	if (msg &&
 	    (fr_digest_cmp(message_authenticator, msg + 2, sizeof(message_authenticator)) != 0)) {
 		memcpy(msg + 2, message_authenticator, sizeof(message_authenticator));
 		memcpy(packet + 4, request_authenticator, sizeof(request_authenticator));
@@ -911,7 +970,7 @@ int fr_radius_verify(uint8_t *packet, uint8_t const *vector,
 	 *	These are random numbers, so there's no point in
 	 *	comparing them.
 	 */
-	if ((packet[0] == FR_RADIUS_CODE_ACCESS_REQUEST) || (packet[0] == FR_RADIUS_CODE_STATUS_SERVER)) {
+	if ((code == FR_RADIUS_CODE_ACCESS_REQUEST) || (code == FR_RADIUS_CODE_STATUS_SERVER)) {
 		return 0;
 	}
 
@@ -1211,6 +1270,7 @@ ssize_t	fr_radius_decode(TALLOC_CTX *ctx, fr_pair_list_t *out,
 
 /** Simple wrapper for callers who just need a shared secret
  *
+ *  @note - All callers verify the packet via fr_packet_verify() before calling this function.
  */
 ssize_t	fr_radius_decode_simple(TALLOC_CTX *ctx, fr_pair_list_t *out,
 				uint8_t *packet, size_t packet_len,
