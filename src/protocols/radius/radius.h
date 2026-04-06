@@ -138,8 +138,6 @@ typedef struct {
 	uint8_t const		*request_authenticator;
 
 	fr_fast_rand_t		rand_ctx;		//!< for tunnel passwords
-	int			salt_offset;		//!< for tunnel passwords
-
 
 	uint8_t			tag;			//!< current tag for encoding
 

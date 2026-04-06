@@ -61,12 +61,20 @@ static ssize_t encode_password(fr_dbuff_t *dbuff, fr_dbuff_marker_t *input, size
 	size_t		i, n;
 	size_t		len;
 
+	if (!packet_ctx->request_authenticator) {
+		fr_strerror_const("Request Authenticator is required to encode User-Password attributes");
+		return -1;
+	}
+
 	/*
 	 *	If the length is zero, round it up.
 	 */
 	len = inlen;
 
-	if (len > RADIUS_MAX_STRING_LENGTH) len = RADIUS_MAX_STRING_LENGTH;
+	if (len > RADIUS_MAX_STRING_LENGTH) {
+		fr_strerror_const("User-Password is too long (253 octets max)");
+		return -1;
+	}
 
 	(void) fr_dbuff_out_memcpy(passwd, input, len);
 	if (len < sizeof(passwd)) memset(passwd + len, 0, sizeof(passwd) - len);
@@ -115,6 +123,11 @@ static ssize_t encode_tunnel_password(fr_dbuff_t *dbuff, fr_dbuff_marker_t *in, 
 	size_t		output_len, encrypted_len, padding;
 	ssize_t		slen;
 	fr_dbuff_t	work_dbuff = FR_DBUFF_MAX(dbuff, RADIUS_MAX_STRING_LENGTH);
+
+	if (!packet_ctx->request_authenticator) {
+		fr_strerror_const("Request Authenticator is required to encode Tunnel-Password attributes");
+		return -1;
+	}
 
 	/*
 	 *	Limit the maximum size of the input password.  2 bytes
@@ -182,11 +195,10 @@ static ssize_t encode_tunnel_password(fr_dbuff_t *dbuff, fr_dbuff_marker_t *in, 
 	 *	The high bit of salt[0] must be set, each salt in a
 	 *	packet should be unique, and they should be random
 	 *
-	 *	So, we set the high bit, add in a counter, and then
-	 *	add in some PRNG data.  should be OK..
+	 *	So we get 15 bytes of randomness, and set the high bit.
 	 */
 	r = fr_fast_rand(&packet_ctx->rand_ctx);
-	tpasswd[0] = (0x80 | (((packet_ctx->salt_offset++) & 0x07) << 4) | ((r >> 8) & 0x0f));
+	tpasswd[0] = (0x80 | ((r >> 8) & 0x7f));
 	tpasswd[1] = r & 0xff;
 	tpasswd[2] = inlen;	/* length of the password string */
 
