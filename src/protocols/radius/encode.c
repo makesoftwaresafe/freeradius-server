@@ -57,7 +57,7 @@ static ssize_t encode_password(fr_dbuff_t *dbuff, fr_dbuff_marker_t *input, size
 {
 	fr_md5_ctx_t	*md5_ctx, *md5_ctx_old;
 	uint8_t	digest[RADIUS_AUTH_VECTOR_LENGTH];
-	uint8_t	passwd[RADIUS_MAX_PASS_LENGTH] = {0};
+	uint8_t	passwd[256] = {0};
 	size_t		i, n;
 	size_t		len;
 
@@ -66,7 +66,7 @@ static ssize_t encode_password(fr_dbuff_t *dbuff, fr_dbuff_marker_t *input, size
 	 */
 	len = inlen;
 
-	if (len > RADIUS_MAX_PASS_LENGTH) len = RADIUS_MAX_PASS_LENGTH;
+	if (len > RADIUS_MAX_STRING_LENGTH) len = RADIUS_MAX_STRING_LENGTH;
 
 	(void) fr_dbuff_out_memcpy(passwd, input, len);
 	if (len < sizeof(passwd)) memset(passwd + len, 0, sizeof(passwd) - len);
