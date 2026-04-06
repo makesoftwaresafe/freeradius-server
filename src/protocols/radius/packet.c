@@ -40,7 +40,7 @@ RCSID("$Id$")
 /** Encode a packet
  *
  */
-ssize_t fr_packet_encode(fr_packet_t *packet, fr_pair_list_t *list,
+ssize_t fr_radius_packet_encode(fr_packet_t *packet, fr_pair_list_t *list,
 				fr_packet_t const *original, char const *secret)
 {
 	ssize_t slen;
@@ -147,7 +147,7 @@ int fr_radius_packet_verify(fr_packet_t *packet, fr_packet_t *original, char con
 /** Sign a previously encoded packet
  *
  */
-int fr_packet_sign(fr_packet_t *packet, fr_packet_t const *original,
+int fr_radius_packet_sign(fr_packet_t *packet, fr_packet_t const *original,
 			  char const *secret)
 {
 	int ret;
@@ -274,7 +274,7 @@ fr_packet_t *fr_packet_recv(TALLOC_CTX *ctx, int fd, int flags, uint32_t max_att
  *
  * Also attach reply attribute value pairs and any user message provided.
  */
-int fr_packet_send(fr_packet_t *packet, fr_pair_list_t *list,
+int fr_radius_packet_send(fr_packet_t *packet, fr_pair_list_t *list,
 			  fr_packet_t const *original, char const *secret)
 {
 	/*
@@ -291,7 +291,7 @@ int fr_packet_send(fr_packet_t *packet, fr_pair_list_t *list,
 		/*
 		 *	Encode the packet.
 		 */
-		if (fr_packet_encode(packet, list, original, secret) < 0) {
+		if (fr_radius_packet_encode(packet, list, original, secret) < 0) {
 			return -1;
 		}
 
@@ -299,7 +299,7 @@ int fr_packet_send(fr_packet_t *packet, fr_pair_list_t *list,
 		 *	Re-sign it, including updating the
 		 *	Message-Authenticator.
 		 */
-		if (fr_packet_sign(packet, original, secret) < 0) {
+		if (fr_radius_packet_sign(packet, original, secret) < 0) {
 			return -1;
 		}
 

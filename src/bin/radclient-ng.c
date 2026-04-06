@@ -1026,7 +1026,7 @@ static int send_one_packet(fr_bio_packet_t *client, rc_request_t *request)
 			 *	Use CHAP-Challenge pair if present, otherwise create CHAP-Challenge and
 			 *	populate with current Request Authenticator.
 			 *
-			 *	Request Authenticator is re-calculated by fr_packet_sign
+			 *	Request Authenticator is re-calculated by fr_radius_packet_sign
 			 */
 			challenge = fr_pair_find_by_da(&request->request_pairs, NULL, attr_chap_challenge);
 			if (!challenge || (challenge->vp_length < 7)) {

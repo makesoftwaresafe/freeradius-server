@@ -1031,7 +1031,7 @@ static int send_one_packet(rc_request_t *request)
 				 *	Use CHAP-Challenge pair if present, otherwise create CHAP-Challenge and
 				 *	populate with current Request Authenticator.
 				 *
-				 *	Request Authenticator is re-calculated by fr_packet_sign
+				 *	Request Authenticator is re-calculated by fr_radius_packet_sign
 				 */
 				challenge = fr_pair_find_by_da(&request->request_pairs, NULL, attr_chap_challenge);
 				if (!challenge || (challenge->vp_length < 7)) {
@@ -1119,7 +1119,7 @@ static int send_one_packet(rc_request_t *request)
 	/*
 	 *	Send the packet.
 	 */
-	if (fr_packet_send(request->packet, &request->request_pairs, NULL, secret) < 0) {
+	if (fr_radius_packet_send(request->packet, &request->request_pairs, NULL, secret) < 0) {
 		REDEBUG("Failed to send packet for ID %d", request->packet->id);
 		deallocate_id(request);
 		request->done = true;
@@ -1274,7 +1274,7 @@ static int recv_coa_packet(fr_time_delta_t wait_time)
 	/*
 	 *	Send reply.
 	 */
-	if (fr_packet_send(request->reply, &request->reply_pairs, packet, secret) < 0) {
+	if (fr_radius_packet_send(request->reply, &request->reply_pairs, packet, secret) < 0) {
 		REDEBUG("Failed sending CoA reply");
 		return 0;
 	}

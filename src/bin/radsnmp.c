@@ -799,7 +799,7 @@ do { \
 			 *	next call.
 			 */
 			for (i = 0; i < conf->retries; i++) {
-				rcode = fr_packet_send(packet, &request_vps, NULL, conf->secret);
+				rcode = fr_radius_packet_send(packet, &request_vps, NULL, conf->secret);
 				if (rcode < 0) {
 					ERROR("Failed sending: %s", fr_syserror(errno));
 					return EXIT_FAILURE;
