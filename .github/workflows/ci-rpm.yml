@@ -205,7 +205,7 @@ jobs:
         dnf install -y procps-ng
 
     - name: Load RPMs
-      uses: actions/download-artifact@v6
+      uses: actions/download-artifact@v8
       with:
         name: rpms-${{ matrix.env.NAME }}
 
