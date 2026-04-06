@@ -1169,7 +1169,7 @@ static int recv_coa_packet(fr_time_delta_t wait_time)
 	/*
 	 *	Fails the signature validation: not a real reply
 	 */
-	if (fr_packet_verify(packet, NULL, secret) < 0) {
+	if (fr_radius_packet_verify(packet, NULL, secret) < 0) {
 		DEBUG("CoA verification failed");
 		talloc_free(packet);
 		return 0;
@@ -1525,7 +1525,7 @@ retry:
 	 *	Fails the signature validation: not a real reply.
 	 *	FIXME: Silently drop it and listen for another packet.
 	 */
-	if (fr_packet_verify(reply, request->packet, secret) < 0) {
+	if (fr_radius_packet_verify(reply, request->packet, secret) < 0) {
 		REDEBUG("Reply verification failed");
 		stats.lost++;
 		goto packet_done; /* shared secret is incorrect */

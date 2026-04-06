@@ -126,7 +126,7 @@ bool fr_packet_ok(fr_packet_t *packet, uint32_t max_attributes, bool require_mes
 /** Verify the Request/Response Authenticator (and Message-Authenticator if present) of a packet
  *
  */
-int fr_packet_verify(fr_packet_t *packet, fr_packet_t *original, char const *secret)
+int fr_radius_packet_verify(fr_packet_t *packet, fr_packet_t *original, char const *secret)
 {
 	char		buffer[INET6_ADDRSTRLEN];
 

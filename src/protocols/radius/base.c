@@ -1270,7 +1270,7 @@ ssize_t	fr_radius_decode(TALLOC_CTX *ctx, fr_pair_list_t *out,
 
 /** Simple wrapper for callers who just need a shared secret
  *
- *  @note - All callers verify the packet via fr_packet_verify() before calling this function.
+ *  @note - All callers verify the packet via fr_radius_packet_verify() before calling this function.
  */
 ssize_t	fr_radius_decode_simple(TALLOC_CTX *ctx, fr_pair_list_t *out,
 				uint8_t *packet, size_t packet_len,

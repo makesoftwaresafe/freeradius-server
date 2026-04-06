@@ -273,7 +273,7 @@ ssize_t		fr_packet_encode(fr_packet_t *packet, fr_pair_list_t *list,
 bool		fr_packet_ok(fr_packet_t *packet, uint32_t max_attributes, bool require_message_authenticator,
 				    fr_radius_decode_fail_t *reason) CC_HINT(nonnull (1));
 
-int		fr_packet_verify(fr_packet_t *packet, fr_packet_t *original,
+int		fr_radius_packet_verify(fr_packet_t *packet, fr_packet_t *original,
 					char const *secret) CC_HINT(nonnull (1,3));
 int		fr_packet_sign(fr_packet_t *packet, fr_packet_t const *original,
 				      char const *secret) CC_HINT(nonnull (1,3));

@@ -1470,7 +1470,7 @@ static void rs_packet_process(uint64_t count, rs_event_t *event, struct pcap_pkt
 			FILE *log_fp = fr_log_fp;
 
 			fr_log_fp = NULL;
-			ret = fr_packet_verify(packet, original->expect, conf->radius_secret);
+			ret = fr_radius_packet_verify(packet, original->expect, conf->radius_secret);
 			fr_log_fp = log_fp;
 			if (ret != 0) {
 				fr_perror("Failed verifying packet ID %d", packet->id);
@@ -1608,7 +1608,7 @@ static void rs_packet_process(uint64_t count, rs_event_t *event, struct pcap_pkt
 				FILE *log_fp = fr_log_fp;
 
 				fr_log_fp = NULL;
-				ret = fr_packet_verify(packet, NULL, conf->radius_secret);
+				ret = fr_radius_packet_verify(packet, NULL, conf->radius_secret);
 				fr_log_fp = log_fp;
 				if (ret != 0) {
 					fr_perror("Failed verifying packet ID %d", packet->id);
