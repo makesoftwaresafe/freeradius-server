@@ -839,7 +839,7 @@ check_for_child:
 	FR_SBUFF_SET_RETURN(in, &our_in);
 }
 
-static int _map_afrom_cs(TALLOC_CTX *ctx, map_list_t *out, map_t *parent, CONF_SECTION *cs,
+static int _map_afrom_cs(TALLOC_CTX *ctx, map_list_t *out, map_t *parent, CONF_SECTION const *cs,
 			 tmpl_rules_t const *lhs_rules, tmpl_rules_t const *rhs_rules,
 			 map_validate_t validate, void *uctx,
 			 unsigned int max, bool update, bool edit)
@@ -1133,7 +1133,7 @@ static int _map_afrom_cs(TALLOC_CTX *ctx, map_list_t *out, map_t *parent, CONF_S
  *	- 0 on success.
  *	- -1 on failure.
  */
-int map_afrom_cs(TALLOC_CTX *ctx, map_list_t *out, CONF_SECTION *cs,
+int map_afrom_cs(TALLOC_CTX *ctx, map_list_t *out, CONF_SECTION const *cs,
 		 tmpl_rules_t const *lhs_rules, tmpl_rules_t const *rhs_rules,
 		 map_validate_t validate, void *uctx,
 		 unsigned int max)
