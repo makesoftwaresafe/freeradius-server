@@ -494,7 +494,7 @@ static int trigger_args_validate(map_t *map, UNUSED void *uctx)
  * @param[in] cs	CONF_SECTION to search for a "trigger_args" section
  * @param[in] args	Common module data which will populate default pairs
  */
-int module_trigger_args_build(TALLOC_CTX *ctx, fr_pair_list_t *list, CONF_SECTION *cs, module_trigger_args_t *args)
+int module_trigger_args_build(TALLOC_CTX *ctx, fr_pair_list_t *list, CONF_SECTION const *cs, module_trigger_args_t *args)
 {
 	map_list_t		*maps;
 	map_t			*map = NULL;
