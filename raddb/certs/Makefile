@@ -358,6 +358,18 @@ ecc/inner-server.vrfy: ecc/ca.pem
 
 ######################################################################
 #
+#  Create a delta CRL
+#
+######################################################################
+rsa/delta.crl: rsa/ca.pem index.txt
+	openssl ca -gencrl -keyfile rsa/ca.key -cert $< -config ./ca.cnf -out rsa/ca-delta.pem -key $(PASSWORD_CA)
+	openssl crl -in rsa/ca-delta.pem -outform DER -out rsa/ca-new.crl
+	openssl crl -key rsa/ca.key -in rsa/ca.crl -gendelta rsa/ca-new.crl -outform DER -out $@
+	@rm -f rsa/ca-delta.pem
+	@rm -f rsa/ca-new.crl
+
+######################################################################
+#
 #  Miscellaneous rules.
 #
 ######################################################################
