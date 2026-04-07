@@ -765,6 +765,8 @@ static xlat_action_t cipher_rsa_verify_xlat(TALLOC_CTX *ctx, fr_dcursor_t *out,
 	fr_value_box_t			*in_head = fr_value_box_list_pop_head(in);
 	fr_value_box_t			*args;
 
+	fr_assert(in_head);
+
 	/*
 	 *	Don't auto-cast to octets if the signature
 	 *	isn't already in that form.
