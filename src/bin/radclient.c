@@ -124,6 +124,7 @@ static fr_dict_attr_t const *attr_packet_type;
 static fr_dict_attr_t const *attr_user_name;
 static fr_dict_attr_t const *attr_user_password;
 static fr_dict_attr_t const *attr_proxy_state;
+static fr_dict_attr_t const *attr_message_authenticator;
 
 static fr_dict_attr_t const *attr_radclient_coa_filename;
 static fr_dict_attr_t const *attr_radclient_coa_filter;
@@ -148,6 +149,7 @@ static const fr_dict_attr_autoload_t radclient_dict_attr[] = {
 	{ .out = &attr_user_password, .name = "User-Password", .type = FR_TYPE_STRING, .dict = &dict_radius },
 	{ .out = &attr_user_name, .name = "User-Name", .type = FR_TYPE_STRING, .dict = &dict_radius },
 	{ .out = &attr_proxy_state, .name = "Proxy-State", .type = FR_TYPE_OCTETS, .dict = &dict_radius },
+	{ .out = &attr_message_authenticator, .name = "Message-Authenticator", .type = FR_TYPE_OCTETS, .dict = &dict_radius },
 
 	DICT_AUTOLOAD_TERMINATOR
 };
@@ -948,6 +950,8 @@ static void deallocate_id(rc_request_t *request)
  */
 static int send_one_packet(rc_request_t *request)
 {
+	fr_pair_t *vp;
+
 	fr_assert(request->done == false);
 
 #ifdef STATIC_ANALYZER
@@ -1021,8 +1025,6 @@ static int send_one_packet(rc_request_t *request)
 		 *	new authentication vector.
 		 */
 		if (request->password) {
-			fr_pair_t *vp;
-
 			if ((vp = fr_pair_find_by_da(&request->request_pairs, NULL, attr_chap_password)) != NULL) {
 				uint8_t		buffer[17];
 				fr_pair_t	*challenge;
@@ -1031,7 +1033,7 @@ static int send_one_packet(rc_request_t *request)
 				 *	Use CHAP-Challenge pair if present, otherwise create CHAP-Challenge and
 				 *	populate with current Request Authenticator.
 				 *
-				 *	Request Authenticator is re-calculated by fr_radius_packet_sign
+				 *	Request Authenticator is re-calculated by fr_packet_sign
 				 */
 				challenge = fr_pair_find_by_da(&request->request_pairs, NULL, attr_chap_challenge);
 				if (!challenge || (challenge->vp_length < 7)) {
@@ -1117,10 +1119,46 @@ static int send_one_packet(rc_request_t *request)
 	}
 
 	/*
+	 *	If there's a Message-Authenticator in the packet, AND it has a "don't send" operator, then
+	 *	delete it.  We manually encode the packet (which also prints out Message-Authenticator), and
+	 *	then manually remove the Message-Authenticator bytes from the packet.  The encoder still
+	 *	prints out that it's sending Message-Authenticator, but oh well.
+	 */
+	vp = fr_pair_find_by_da(&request->request_pairs, NULL, attr_message_authenticator);
+	if (vp && (vp->op == T_OP_CMP_FALSE) && !request->packet->data &&
+	    (request->packet->code = FR_RADIUS_CODE_ACCESS_REQUEST)) {
+		fr_pair_delete(&request->request_pairs, vp);
+
+		if (fr_radius_packet_encode(request->packet, &request->request_pairs, NULL, secret) < 0) {
+			REDEBUG("Failed to encode packet for ID %d", request->packet->id);
+			goto error;
+		}
+
+		/*
+		 *	Manually re-write the packet to get rid of Message-Authenticator.
+		 */
+		if ((request->packet->data_len >= (RADIUS_HEADER_LENGTH + 18)) &&
+		    (request->packet->data[RADIUS_HEADER_LENGTH] = attr_message_authenticator->attr) &&
+		    (request->packet->data[RADIUS_HEADER_LENGTH + 1] == 18)) {
+			memmove(request->packet->data + RADIUS_HEADER_LENGTH,
+				request->packet->data + RADIUS_HEADER_LENGTH + 18,
+				request->packet->data_len - 18);
+			request->packet->data_len -= 18;
+			fr_nbo_from_uint16(request->packet->data + 2, request->packet->data_len);
+		}
+
+		if (fr_radius_packet_sign(request->packet, NULL, secret) < 0) {
+			REDEBUG("Failed to sign packet for ID %d", request->packet->id);
+			goto error;
+		}
+	}
+
+	/*
 	 *	Send the packet.
 	 */
 	if (fr_radius_packet_send(request->packet, &request->request_pairs, NULL, secret) < 0) {
 		REDEBUG("Failed to send packet for ID %d", request->packet->id);
+	error:
 		deallocate_id(request);
 		request->done = true;
 		return -1;
