@@ -132,5 +132,5 @@ process CHAP authentication requests.  All `Access-Request` packets
 that contain a `CHAP-Password` attribute will then result in an
 `Access-Reject`.
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

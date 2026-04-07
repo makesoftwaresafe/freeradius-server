@@ -56,5 +56,5 @@ The next section xref:debugging/processing.adoc[*Packet Processing*] is where th
 . Server completes the post-authorisation processes for the current packet.
 
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

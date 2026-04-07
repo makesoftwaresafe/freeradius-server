@@ -435,5 +435,5 @@ server in the `clients.conf` file?
 3.  What would happen if each user did not configure the realms to
 "strip" the realm from the proxied requests?
 
-// Copyright (C) 2021 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

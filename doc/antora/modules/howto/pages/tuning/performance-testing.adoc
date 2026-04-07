@@ -194,5 +194,5 @@ best base to start from, which is key to an efficient server.
 
 The testing results vary tremendouslywith other system-specific configurations. This is exactly the reason you should run tests of this nature, to find what's best for _your_ system. Good luck!
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

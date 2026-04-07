@@ -212,5 +212,5 @@ Although the majority of GAUGE values are created using the AVERAGE consolidatio
 ![Accounting Request latency](radsniff_accounting_latency-day.png "Accounting Request latency")
 ![Accounting Request RTC](radsniff_accounting_rtx-day.png "Accounting RTX")
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

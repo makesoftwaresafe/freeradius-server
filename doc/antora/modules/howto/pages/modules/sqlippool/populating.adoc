@@ -207,5 +207,5 @@ each of the ranges first being populated with entries from the
 with random addresses to the defined capacity.
 =============================================
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

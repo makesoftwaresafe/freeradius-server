@@ -29,5 +29,5 @@ The police officer may also ask you to prove that you are authorized to drive. I
 
 The authorization process combines the policy on the RADIUS server and the information in the request from the NAS. The NAS may add additional information to the request, such as the user's Media Access Control (MAC) address. The NAS sends the information to the RADIUS server, where an authorization decision is made.
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

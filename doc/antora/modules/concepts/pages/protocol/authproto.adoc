@@ -145,5 +145,5 @@ The relevant RFCs are:
 * https://datatracker.ietf.org/doc/html/rfc3579[RFC 3579] RADIUS (Remote Authentication Dial In User Service) Support For Extensible Authentication Protocol (EAP)
 
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

@@ -51,5 +51,5 @@ The following table defines the meaning of each module return code.
 
 include::partial$rcode_table.adoc[]
 
-// Copyright (C) 2021 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

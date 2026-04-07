@@ -29,5 +29,5 @@ rpmbuild -ba /usr/src/packages/SPECS/freeradius.spec
 
 include:RPMs-with-Oracle-support
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

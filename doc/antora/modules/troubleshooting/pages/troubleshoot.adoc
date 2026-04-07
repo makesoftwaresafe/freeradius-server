@@ -69,5 +69,5 @@ The host system's CPU power and database determines how many accounting packets 
 handle per second. If the database is limited to a thousand writes per second, the FreeRADIUS accounting
 requests is also limited to a thousand writes per second.
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

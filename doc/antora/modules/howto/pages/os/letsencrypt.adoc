@@ -297,5 +297,5 @@ that may help.
   devices may not. Install the LetsEncrypt root CA certificate on
   those devices if needed.
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

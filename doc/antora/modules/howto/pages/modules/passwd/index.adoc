@@ -40,5 +40,5 @@ A: set `ignore_empty` to `no` in module configuration.
 * ZARAZA, mailto:3APA3A@security.nnov.ru[3APA3A@security.nnov.ru]
 * Michael Chernyakhovsky mailto:mike@mgn.ru[mike@mgn.ru]
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

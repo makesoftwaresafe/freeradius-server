@@ -45,5 +45,5 @@ In short, we can emulate (mostly) TCP connections via UDP.
 
 We do not need to use connected sockets for DHCP.
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

@@ -319,5 +319,5 @@ Brainstorm/TODO by Benny:
 * User Community @ http://www.alcatelunleashed.com
 * German DokuWiki @ http://dokuwiki.alu4u.com
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

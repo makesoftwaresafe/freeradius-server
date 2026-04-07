@@ -266,5 +266,5 @@ ongoing sessions in order to obtain the necessary information. The collection
 and reporting of the additional data required for time-period based data usage
 accounting can be performed efficiently out of band.
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

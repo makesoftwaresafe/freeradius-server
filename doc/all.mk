@@ -282,6 +282,10 @@ doc.fixascii:
 	@perl -p -i -e "s,‘,',g;s,’,',g;s,–,-,g;s,—,-,g;s, , ,g;s:…:,:g;s,“,\",g;s,”,\",g;s,≤,<=,g;s,≥,>=,g;s,→,->,g" $$(find doc/antora -name "*.adoc" -print)
 
 
+.PHONY: doc.copyright
+doc.copyright:
+	perl -p -i -e "s/Copyright \(C\) 2.../Copyright (C) $$(date +%Y)/"  $$(git grep -l 'Copyright' $$(find doc/antora/ -name "*.adoc" -print))
+
 doc: build/docsite/sitemap.xml
 
 # end of WITH_DOC

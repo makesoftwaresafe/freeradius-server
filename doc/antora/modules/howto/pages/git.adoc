@@ -159,5 +159,5 @@ done
 
 .. _example: https://raw.githubusercontent.com/FreeRADIUS/freeradius-server/v4.0.x/scripts/git/post-receive
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

@@ -231,5 +231,5 @@ If their server does not respond with an Access-Accept, work with the other
 participant to debug the issue.
 
 
-// Copyright (C) 2021 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

@@ -197,5 +197,5 @@ The FreeRAIDUS project now requires all contributions to be signed. Refer to the
 * https://git-scm.com/book/en/v2/Git-Tools-Signing-Your-Work[Git Tools Signing]
 * https://help.github.com/en/github/authenticating-to-github/signing-commits[Sign Commits]
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

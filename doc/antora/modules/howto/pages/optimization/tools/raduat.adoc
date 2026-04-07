@@ -282,5 +282,5 @@ The tests to run can be filtered using glob patterns:
 This can be used to drill down, and only run the failing tests.
 
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

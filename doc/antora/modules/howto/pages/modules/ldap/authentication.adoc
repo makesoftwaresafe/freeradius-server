@@ -207,5 +207,5 @@ Here FreeRADIUS is describes it:
  ** successful so `ok` is returned
  . we return `Access-Accept` as `ok` was returned to unlang
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

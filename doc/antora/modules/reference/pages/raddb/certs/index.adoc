@@ -223,5 +223,5 @@ with ALL operating systems. Some common issues are:
   This includes Linux, *BSD, Mac OS X, Solaris, etc. along with all
   known embedded systems, phones, WiFi devices, etc.
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

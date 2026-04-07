@@ -46,5 +46,5 @@ switch User-Name {
 
 The last entry in a `case` section can also be an xref:unlang/actions.adoc[action].
 
-// Copyright (C) 2021 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.

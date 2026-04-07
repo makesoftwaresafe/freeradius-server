@@ -200,5 +200,5 @@ Timeouts in `finally` sections of subrequests should therefore
 be set extremely short, in order to ensure that the parent request
 isn't cancelled due to an excessively long running subrequest.
 
-// Copyright (C) 2025 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.
