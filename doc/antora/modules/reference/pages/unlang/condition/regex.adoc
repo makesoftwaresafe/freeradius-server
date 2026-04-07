@@ -220,6 +220,6 @@ multiple expressions operating on the same subject into a single expression
 using the PCRE alternation '|' operator.
 
 // Licenced under CC-by-NC 4.0.
-// Copyright (C) 2021 Network RADIUS SAS.
+// Copyright (C) 2026 Network RADIUS SAS.
 // Copyright (C) 2019 Arran Cudbard-Bell <a.cudbardb@freeradius.org>
 // This documentation was developed by Network RADIUS SAS.

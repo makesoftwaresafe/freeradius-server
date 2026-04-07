@@ -280,7 +280,7 @@ In general, intermediate relative structural attributes should use `= {}`, as wi
 
 === Item Operators
 
-The list of comparison operators for check items is given in the xref:reference:unlang/condition/cmp.adoc[conditional comparisons] page.  However, the `users` file format does not support casting in a comparison.
+The list of comparison operators for check items is given in the xref:reference:unlang/condition/[conditional comparisons] page.  However, the `users` file format does not support casting in a comparison.
 
 As a special case for compatibility with previous versions, the `users` file also supports two additional comparison operators:
 
@@ -346,5 +346,5 @@ bob	NAS-IP-Address == 192.0.2.1, Password.Cleartext := "hello"
 	Framed-IP-Address := request.Framed-IP-Address
 ----
 
-// Copyright (C) 2023 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
+// Copyright (C) 2026 Network RADIUS SAS.  Licenced under CC-by-NC 4.0.
 // This documentation was developed by Network RADIUS SAS.
