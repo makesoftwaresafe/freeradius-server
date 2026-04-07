@@ -156,7 +156,7 @@ code, or documentation).
 
 Technical support, managed systems support, custom deployments,
 sponsored feature development and many other commercial services
-are available from [Network RADIUS](https://networkradius.com).
+are available from [InkBridge Networks](https://www.inkbridgenetworks.com).
 
 [BuildStatus]: https://github.com/FreeRADIUS/freeradius-server/workflows/CI/badge.svg?branch=master "CI status"
 [BuildStatusLink]: https://github.com/FreeRADIUS/freeradius-server/actions?query=workflow%3ACI
