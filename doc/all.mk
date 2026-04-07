@@ -9,28 +9,6 @@
 WITH_DOC := $(strip $(foreach x,doc man doxygen,$(findstring $(x),$(MAKECMDGOALS))))
 
 #
-#  Convert adoc to man, and then let "install.man" deal with things.
-#  This means a bare "make install.man" after "configure" won't get the
-#  right things, but oh well.
-#
-ADOC2MAN_FILES := $(filter-out %/index.adoc,$(wildcard doc/antora/modules/reference/pages/man/*.adoc))
-$(BUILD_DIR)/make/man.mk: $(ADOC2MAN_FILES) | $(BUILD_DIR)/make
-	@rm -f $@
-	${Q}for x in $^; do \
-		y=$$(grep :manvolnum: $$x | awk '{print $$2}'); \
-		z=$$(basename $$x | sed 's/.adoc//'); \
-		echo "AUTO_MAN_FILES += man/man$$y/$$z.$$y" >> $@; \
-		echo "man/man$$y/$$z.$$y: $$x" >> $@; \
-		printf "\t"'@echo AUTO-MAN $$(notdir $$@)'"\n" >> $@; \
-		printf "\t"'@mkdir -p $$(dir $$@)'"\n" >> $@; \
-		printf "\t"'@asciidoctor -b manpage $$< -o $$@'"\n" >> $@; \
-		echo "" >> $@; \
-	done
-
--include $(BUILD_DIR)/make/man.mk
-ALL_INSTALL += $(AUTO_MAN_FILES)
-
-#
 #  Skip documentation if any of the necessary prerequisites are missing.
 #
 ifeq "$(ASCIIDOCTOR)" ""
@@ -57,6 +35,28 @@ endif
 #  If we still decide to build the documentation, then add in all of the documentation rules.
 #
 ifneq "$(WITH_DOC)" ""
+#
+#  Convert adoc to man, and then let "install.man" deal with things.
+#  This means a bare "make install.man" after "configure" won't get the
+#  right things, but oh well.
+#
+ADOC2MAN_FILES := $(filter-out %/index.adoc,$(wildcard doc/antora/modules/reference/pages/man/*.adoc))
+$(BUILD_DIR)/make/man.mk: $(ADOC2MAN_FILES) | $(BUILD_DIR)/make
+	@rm -f $@
+	${Q}for x in $^; do \
+		y=$$(grep :manvolnum: $$x | awk '{print $$2}'); \
+		z=$$(basename $$x | sed 's/.adoc//'); \
+		echo "AUTO_MAN_FILES += man/man$$y/$$z.$$y" >> $@; \
+		echo "man/man$$y/$$z.$$y: $$x" >> $@; \
+		printf "\t"'@echo AUTO-MAN $$(notdir $$@)'"\n" >> $@; \
+		printf "\t"'@mkdir -p $$(dir $$@)'"\n" >> $@; \
+		printf "\t"'@asciidoctor -b manpage $$< -o $$@'"\n" >> $@; \
+		echo "" >> $@; \
+	done
+
+-include $(BUILD_DIR)/make/man.mk
+ALL_INSTALL += $(AUTO_MAN_FILES)
+
 all.doc: docsite
 
 install: install.doc
