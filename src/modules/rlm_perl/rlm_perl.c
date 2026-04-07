@@ -1233,6 +1233,8 @@ static xlat_action_t perl_xlat(TALLOC_CTX *ctx, fr_dcursor_t *out,
 	fr_value_box_list_t		list, sub_list;
 	fr_value_box_t			*vb = NULL;
 
+	fr_assert(func);
+
 	fr_value_box_list_init(&list);
 	fr_value_box_list_init(&sub_list);
 
@@ -1736,7 +1738,7 @@ static int mod_instantiate(module_inst_ctx_t const *mctx)
 				cf_log_err(cp, "Perl subroutine %s does not exist", func->function_name);
 				return -1;
 			}
-		}		
+		}
 	}
 
 	PL_endav = end_AV;
