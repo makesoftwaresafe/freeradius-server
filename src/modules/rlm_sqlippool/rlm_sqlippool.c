@@ -337,6 +337,7 @@ static unlang_action_t mod_alloc_resume(unlang_result_t *p_result, module_ctx_t 
 		return UNLANG_ACTION_PUSHED_CHILD;
 
 	case IPPOOL_ALLOC_FIND:
+		if (!query) RETURN_UNLANG_FAIL;
 		SUBMIT_QUERY(query->vb_strvalue, IPPOOL_ALLOC_FIND_RUN, SQL_QUERY_SELECT, select);
 
 	case IPPOOL_ALLOC_FIND_RUN:
