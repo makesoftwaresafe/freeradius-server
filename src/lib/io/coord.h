@@ -80,7 +80,7 @@ typedef struct {
 	void				*uctx;
 } fr_worker_to_coord_ctx_t;
 
-fr_coord_reg_t	*fr_coord_register(TALLOC_CTX *ctx, fr_coord_reg_ctx_t *reg_ctx);
+fr_coord_reg_t	*fr_coord_register(fr_coord_reg_ctx_t *reg_ctx);
 
 void		fr_coord_deregister(fr_coord_reg_t *coord_reg);
 

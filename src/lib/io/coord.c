@@ -129,13 +129,12 @@ static int8_t coord_cmp(void const *one, void const *two)
  *
  * To be called from mod_instantiate of a module which uses a coordinator
  *
- * @param ctx		to allocate registration under
  * @param reg_ctx	Registration data
  * @return
  *	- coordination registration on success
  *	- NULL on failure
  */
-fr_coord_reg_t *fr_coord_register(TALLOC_CTX *ctx, fr_coord_reg_ctx_t *reg_ctx)
+fr_coord_reg_t *fr_coord_register(fr_coord_reg_ctx_t *reg_ctx)
 {
 	fr_coord_reg_t		*coord_reg;
 
@@ -149,7 +148,7 @@ fr_coord_reg_t *fr_coord_register(TALLOC_CTX *ctx, fr_coord_reg_ctx_t *reg_ctx)
 		fr_dlist_talloc_init(coord_regs, fr_coord_reg_t, entry);
 	}
 
-	MEM(coord_reg = talloc(ctx, fr_coord_reg_t));
+	MEM(coord_reg = talloc(coord_regs, fr_coord_reg_t));
 	*coord_reg = (fr_coord_reg_t) {
 		.name = reg_ctx->name,
 		.coord_cb = reg_ctx->coord_cb,

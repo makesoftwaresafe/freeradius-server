@@ -727,8 +727,7 @@ static int mod_instantiate(module_inst_ctx_t const *mctx)
 
 	FR_COORD_PAIR_CB_CTX_SET(coord_callbacks, worker_callbacks, inst->coord_pair_reg);
 
-	inst->coord_reg = fr_coord_register(inst,
-		&(fr_coord_reg_ctx_t) {
+	inst->coord_reg = fr_coord_register(&(fr_coord_reg_ctx_t) {
 			.name = mctx->mi->name,
 			.coord_cb = coord_callbacks,
 			.worker_cb = worker_callbacks,
