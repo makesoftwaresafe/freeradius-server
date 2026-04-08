@@ -146,7 +146,7 @@ fr_coord_reg_t *fr_coord_register(TALLOC_CTX *ctx, fr_coord_reg_ctx_t *reg_ctx)
 	/* Allocate the list of registered coordinators if not already done */
 	if (!coord_regs) {
 		MEM(coord_regs = talloc_zero(NULL, fr_dlist_head_t));
-		fr_dlist_init(coord_regs, fr_coord_reg_t, entry);
+		fr_dlist_talloc_init(coord_regs, fr_coord_reg_t, entry);
 	}
 
 	MEM(coord_reg = talloc(ctx, fr_coord_reg_t));
