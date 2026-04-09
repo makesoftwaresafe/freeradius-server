@@ -49,7 +49,7 @@ typedef struct {
 								///< Defaults to main config max request time.
 } fr_coord_pair_reg_ctx_t;
 
-fr_coord_pair_reg_t	*fr_coord_pair_register(TALLOC_CTX *ctx, fr_coord_pair_reg_ctx_t *reg_ctx);
+fr_coord_pair_reg_t	*fr_coord_pair_register(fr_coord_pair_reg_ctx_t *reg_ctx);
 
 int		fr_coord_to_worker_reply_send(request_t *request, uint32_t worker_id);
 

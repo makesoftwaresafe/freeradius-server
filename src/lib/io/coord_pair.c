@@ -110,7 +110,7 @@ static int _coord_pair_reg_free(fr_coord_pair_reg_t *to_free)
  * @param ctx		to allocate the registration under.
  * @param reg_ctx	Callback details to register.
  */
-fr_coord_pair_reg_t *fr_coord_pair_register(TALLOC_CTX *ctx, fr_coord_pair_reg_ctx_t *reg_ctx)
+fr_coord_pair_reg_t *fr_coord_pair_register(fr_coord_pair_reg_ctx_t *reg_ctx)
 {
 	fr_coord_pair_reg_t		*coord_pair_reg;
 	fr_coord_worker_pair_cb_reg_t	*cb_reg = reg_ctx->worker_cb;
@@ -134,7 +134,7 @@ fr_coord_pair_reg_t *fr_coord_pair_register(TALLOC_CTX *ctx, fr_coord_pair_reg_c
 		MEM(coord_pair_modules = module_list_alloc(NULL, &module_list_type_global, "coord", true));
 	}
 
-	MEM(coord_pair_reg = talloc(ctx, fr_coord_pair_reg_t));
+	MEM(coord_pair_reg = talloc(coord_pair_regs, fr_coord_pair_reg_t));
 	*coord_pair_reg = (fr_coord_pair_reg_t) {
 		.root = reg_ctx->root,
 		.cb_id = reg_ctx->cb_id,
