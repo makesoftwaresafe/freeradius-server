@@ -44,6 +44,7 @@ static fr_dict_attr_t const	*attr_worker_id = NULL;
  *
  */
 struct fr_coord_pair_reg_s {
+	char const			*name;			//!< Name for log / request name.
 	fr_dlist_t			entry;			//!< Entry in list of pair list registrations
 	fr_dict_attr_t const 		*attr_packet_type;	//!< Attribute containing packet type
 	fr_dict_attr_t const		*root;			//!< Pair list decoding root attribute
@@ -136,6 +137,7 @@ fr_coord_pair_reg_t *fr_coord_pair_register(fr_coord_pair_reg_ctx_t *reg_ctx)
 
 	MEM(coord_pair_reg = talloc(coord_pair_regs, fr_coord_pair_reg_t));
 	*coord_pair_reg = (fr_coord_pair_reg_t) {
+		.name = reg_ctx->name,
 		.root = reg_ctx->root,
 		.cb_id = reg_ctx->cb_id,
 		.max_request_time = fr_time_delta_eq(reg_ctx->max_request_time, fr_time_delta_from_msec(0)) ?
@@ -324,11 +326,11 @@ void coord_pair_request_init(fr_event_list_t *el, request_t *request, fr_time_t 
 }
 
 static inline CC_HINT(always_inline)
-void coord_pair_request_name_number(request_t *request)
+void coord_pair_request_name_number(request_t *request, char const *name)
 {
 	request->number = atomic_fetch_add_explicit(&request_number, 1, memory_order_seq_cst);
 	if (request->name) talloc_const_free(request->name);
-	request->name = talloc_asprintf(request, "Coord-%"PRIu64, request->number);
+	request->name = talloc_asprintf(request, "Coord-%s-%"PRIu64, name, request->number);
 }
 
 static int _coord_pair_request_deinit( request_t *request, UNUSED void *uctx)
@@ -364,7 +366,7 @@ static request_t *coord_pair_request_bootstrap(fr_coord_pair_t *coord_pair, fr_t
 		.uctx = uctx
 	};
 	coord_pair_request_init(coord_pair->el, request, now, packet_ctx);
-	coord_pair_request_name_number(request);
+	coord_pair_request_name_number(request, coord_pair->coord_pair_reg->name);
 
 	unlang_interpret_set(request, coord_pair->intp);
 

@@ -717,6 +717,7 @@ static int mod_instantiate(module_inst_ctx_t const *mctx)
 	rlm_crl_t	*inst = talloc_get_type_abort(mctx->mi->data, rlm_crl_t);
 
 	inst->coord_pair_reg = fr_coord_pair_register(&(fr_coord_pair_reg_ctx_t) {
+			.name = mctx->mi->name,
 			.worker_cb = worker_pair_callbacks,
 			.cb_id = CRL_COORD_PAIR_CALLBACK_ID,
 			.root = fr_dict_root(dict_crl),

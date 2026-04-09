@@ -41,6 +41,7 @@ typedef struct {
 } fr_coord_worker_pair_cb_reg_t;
 
 typedef struct {
+	char const			*name;			//!< Name for log entries / request names.
 	fr_coord_worker_pair_cb_reg_t	*worker_cb;		//!< Callbacks for coordinator -> worker pair messages.
 	fr_dict_attr_t const		*root;			//!< Root attribute for decoding pair list messages.
 	uint32_t			cb_id;			//!< Coordinator callback id used for pair list messages.
