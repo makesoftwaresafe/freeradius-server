@@ -1533,7 +1533,7 @@ static int _module_instance_free(module_instance_t *mi)
 	 *	Remove all xlat's registered to module instance.
 	 */
 	if (mi->data) {
-		xlat_func_unregister(mi->name);
+		if (mi->module->type == DL_MODULE_TYPE_MODULE) xlat_func_unregister(mi->name);
 		xlat_func_unregister_module(mi);
 	}
 
