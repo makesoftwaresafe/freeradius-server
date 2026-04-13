@@ -1859,7 +1859,7 @@ have_client:
 		 *	want to clean it up.
 		 */
 		if (fr_timer_armed(client->ev)) {
-			FR_TIMER_DELETE_RETURN(&client->ev);
+			FR_TIMER_DISARM_RETURN(client->ev);
 			client->ready_to_delete = false;
 		}
 
@@ -1867,7 +1867,7 @@ have_client:
 		 *	Remove cleanup timers for the connection parent.
 		 */
 		if (connection && fr_timer_armed(connection->parent->ev)) {
-			FR_TIMER_DELETE_RETURN(&connection->parent->ev);
+			FR_TIMER_DISARM_RETURN(connection->parent->ev);
 			connection->parent->ready_to_delete = false;
 		}
 
