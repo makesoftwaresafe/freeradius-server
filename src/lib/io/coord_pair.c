@@ -108,7 +108,6 @@ static int _coord_pair_reg_free(fr_coord_pair_reg_t *to_free)
  * Returns a structure to pass as uctx to fr_coord_cb_t using the
  * macro FR_COORD_PAIR_CB_CTX_SET.
  *
- * @param ctx		to allocate the registration under.
  * @param reg_ctx	Callback details to register.
  */
 fr_coord_pair_reg_t *fr_coord_pair_register(fr_coord_pair_reg_ctx_t *reg_ctx)
