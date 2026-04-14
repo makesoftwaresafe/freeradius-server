@@ -9,6 +9,10 @@ int main(UNUSED int argc, UNUSED char **argv)
 {
 #define SIZEOF(_struct)	printf("%-24s\t%zu\tbytes\n", STRINGIFY(_struct), sizeof(_struct))
 
+	SIZEOF(CONF_ITEM);
+	SIZEOF(CONF_PAIR);
+	SIZEOF(CONF_SECTION);
+
 	SIZEOF(fr_dict_attr_t);
 	SIZEOF(fr_dict_attr_flags_t);
 	SIZEOF(fr_dict_enum_value_t);
@@ -16,12 +20,11 @@ int main(UNUSED int argc, UNUSED char **argv)
 	SIZEOF(fr_dlist_t);
 	SIZEOF(fr_dlist_head_t);
 
-	SIZEOF(CONF_ITEM);
-	SIZEOF(CONF_PAIR);
-	SIZEOF(CONF_SECTION);
+	SIZEOF(fr_ipaddr_t);
 
 	SIZEOF(fr_pair_t);
 	SIZEOF(fr_pair_list_t);
+	SIZEOF(FR_TLIST_ENTRY(fr_pair_order_list));
 
 	SIZEOF(fr_rb_tree_t);
 	SIZEOF(fr_rb_node_t);
@@ -30,9 +33,9 @@ int main(UNUSED int argc, UNUSED char **argv)
 	SIZEOF(fr_tlist_head_t);
 
 	SIZEOF(fr_type_t);
+
 	SIZEOF(fr_value_box_t);
 	SIZEOF(fr_value_box_datum_t);
-	SIZEOF(fr_ipaddr_t);
 
 	SIZEOF(tmpl_t);
 	SIZEOF(tmpl_attr_rules_t);
