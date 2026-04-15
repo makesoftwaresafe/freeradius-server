@@ -46,6 +46,7 @@ int main(UNUSED int argc, UNUSED char **argv)
 	SIZEOF(unlang_group_t);
 	SIZEOF(unlang_thread_t);
 	SIZEOF(unlang_stack_frame_t);
+	SIZEOF(unlang_stack_t);
 
 	SIZEOF(xlat_call_t);
 	SIZEOF(xlat_exp_t);
