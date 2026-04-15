@@ -483,6 +483,7 @@ static int cf_pair_unescape(CONF_PAIR *cp, conf_parser_t const *rule)
 
 				*q++ = oct;
 				p = end;
+				continue;
 			} else {
 				*q++ = *p;
 			}
