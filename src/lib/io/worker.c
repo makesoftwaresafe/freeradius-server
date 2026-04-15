@@ -1475,8 +1475,8 @@ nomem:
 	}
 
 	{
-		if (worker->config.reuse.child_pool_size == 0) worker->config.reuse.child_pool_size = REQUEST_POOL_SIZE;
-		if (worker->config.reuse.num_children == 0) worker->config.reuse.num_children = REQUEST_POOL_HEADERS;
+		if (!worker->config.reuse.child_pool_size) worker->config.reuse.child_pool_size = REQUEST_POOL_SIZE;
+		if (!worker->config.reuse.num_children) worker->config.reuse.num_children = REQUEST_POOL_NUM_OBJECTS;
 
 		if (!(worker->slab = request_slab_list_alloc(worker, el, &worker->config.reuse, NULL, NULL,
 							     UNCONST(void *, worker), true, false))) {

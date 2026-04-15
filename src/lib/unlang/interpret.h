@@ -36,8 +36,13 @@ extern "C" {
 #define UNLANG_TOP_FRAME (true)
 #define UNLANG_SUB_FRAME (false)
 
-#define UNLANG_STACK_MAX (64)		//!< The maximum depth of the stack.
-#define UNLANG_FRAME_PRE_ALLOC (128)	//!< How much memory we pre-alloc for each frame.
+#define UNLANG_FRAME_SIZE	(152)	//!< size of one stack frame, see radsizes
+#define UNLANG_STACK_MAX	(64)	//!< The maximum depth of the stack.
+#define UNLANG_STACK_SIZE	(9744)	//!< size of the unlang stack
+#define UNLANG_FRAME_STATE	(128)	//!< guess at per-frame state
+#define UNLANG_FRAME_POOL_SIZE	(UNLANG_STACK_MAX * UNLANG_FRAME_STATE)	//!< total size of all frame states
+#define UNLANG_STACK_POOL_SIZE	(UNLANG_STACK_SIZE + UNLANG_FRAME_POOL_SIZE)  //!< total size of all stack objects
+#define UNLANG_STACK_NUM_OBJECTS (1 + UNLANG_STACK_MAX) //!< number of stack-allocated objects, i.e. number of talloc headers
 
 #define UNLANG_REQUEST_RUNNING (true)
 #define UNLANG_REQUEST_RESUME (false)

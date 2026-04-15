@@ -1235,10 +1235,9 @@ void *unlang_interpret_stack_alloc(TALLOC_CTX *ctx)
 	unlang_stack_t *stack;
 
 	/*
-	 *	If we have talloc_pooled_object allocate the
-	 *	stack as a combined chunk/pool, with memory
-	 *	to hold at mutable data for at least a quarter
-	 *	of the maximum number of stack frames.
+	 *	If we have talloc_pooled_object allocate the stack as
+	 *	a combined chunk/pool, with memory to hold at mutable
+	 *	state data for the of the stack frames.
 	 *
 	 *	Having a dedicated pool for mutable stack data
 	 *	means we don't have memory fragmentations issues
@@ -1247,7 +1246,7 @@ void *unlang_interpret_stack_alloc(TALLOC_CTX *ctx)
 	 *	This number is pretty arbitrary, but it seems
 	 *	like too low level to make into a tuneable.
 	 */
-	MEM(stack = talloc_zero_pooled_object(ctx, unlang_stack_t, UNLANG_STACK_MAX, 128));	/* 128 bytes per state */
+	MEM(stack = talloc_zero_pooled_object(ctx, unlang_stack_t, UNLANG_STACK_MAX, UNLANG_FRAME_POOL_SIZE));
 	stack->frame[0].p_result = &stack->frame[0].section_result;
 	stack->frame[0].scratch_result = UNLANG_RESULT_NOT_SET;
 	stack->frame[0].section_result = UNLANG_RESULT_NOT_SET;

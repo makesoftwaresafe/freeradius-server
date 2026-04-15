@@ -184,8 +184,8 @@ fr_coord_pair_reg_t *fr_coord_pair_register(fr_coord_pair_reg_ctx_t *reg_ctx)
 	/*
 	 *	Set defaults for request slab allocation, if not set by conf parsing
 	 */
-	if (coord_pair_reg->reuse.child_pool_size == 0) coord_pair_reg->reuse.child_pool_size = REQUEST_POOL_SIZE;
-	if (coord_pair_reg->reuse.num_children == 0) coord_pair_reg->reuse.num_children = REQUEST_POOL_HEADERS;
+	if (!coord_pair_reg->reuse.child_pool_size) coord_pair_reg->reuse.child_pool_size = REQUEST_POOL_SIZE;
+	if (!coord_pair_reg->reuse.num_children) coord_pair_reg->reuse.num_children = REQUEST_POOL_NUM_OBJECTS;
 
 	cp = cf_pair_find(reg_ctx->cs, "virtual_server");
 	if (!cp) {
