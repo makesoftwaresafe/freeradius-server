@@ -1660,6 +1660,10 @@ static void rs_packet_process(uint64_t count, rs_event_t *event, struct pcap_pkt
 		}
 		search.expect->code = packet->code;
 		memcpy(search.expect->vector, packet->vector, sizeof(search.expect->vector));
+		if (conf->verify_radius_authenticator) {
+			search.expect->data_len = packet->data_len;
+			search.expect->data = talloc_memdup(search.expect, packet->data, packet->data_len);
+		}
 
 		if ((conf->link_da_num > 0) && (!fr_pair_list_empty(&decoded))) {
 			int ret;
