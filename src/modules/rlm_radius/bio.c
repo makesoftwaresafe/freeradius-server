@@ -1446,8 +1446,8 @@ static bool check_for_zombie(fr_event_list_t *el, trunk_connection_t *tconn, fr_
 	/*
 	 *	If we've seen ANY response in the allowed window, then the connection is still alive.
 	 */
-	if ((h->ctx.inst->mode == RLM_RADIUS_MODE_PROXY) && fr_time_gt(last_sent, fr_time_wrap(0)) &&
-	    (fr_time_lt(fr_time_add(last_sent, h->ctx.inst->response_window), now))) return false;
+	if ((h->ctx.inst->mode == RLM_RADIUS_MODE_PROXY) &&
+	    fr_time_gt(h->last_reply, fr_time_sub(now, h->ctx.inst->response_window))) return false;
 
 	/*
 	 *	Stop using it for new requests.
