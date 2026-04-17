@@ -1456,6 +1456,14 @@ static bool check_for_zombie(fr_event_list_t *el, trunk_connection_t *tconn, fr_
 	trunk_connection_signal_inactive(tconn);
 
 	if (h->ctx.inst->status_check) {
+		/*
+		 *	If it's UDP, reconnect.  This will start the sending of status checks.
+		 */
+		if (h->ctx.inst->fd_config.socket_type == SOCK_DGRAM) {
+			(void) trunk_connection_requests_requeue(tconn, TRUNK_REQUEST_STATE_ALL, 0, false);
+			trunk_connection_signal_reconnect(tconn, CONNECTION_FAILED);
+		}
+
 		h->status_checking = true;
 
 		/*
