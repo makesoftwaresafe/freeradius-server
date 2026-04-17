@@ -1641,7 +1641,7 @@ static void mod_write(request_t *request, trunk_request_t *treq, bio_handle_t *h
 		  (treq->state == TRUNK_REQUEST_STATE_PARTIAL) ||
 		  ((u->retry.count > 0) && (treq->state == TRUNK_REQUEST_STATE_SENT)));
 
-	fr_assert(!u->status_check);
+	fr_assert(!u->status_check || h->status_checking);
 
 	/*
 	 *	If it's a partial packet, then write the partial bit.
@@ -1802,7 +1802,7 @@ do_write:
 		action = "Retransmitted";
 	}
 
-	fr_assert(!u->status_check);
+	fr_assert(!u->status_check || h->status_checking);
 
 	if (!u->proxied) {
 		RDEBUG("%s request.  Expecting response within %pVs", action,
