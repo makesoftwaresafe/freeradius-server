@@ -357,8 +357,10 @@ log {
 	#  suppress_secrets:: Suppress "secret" values when printing
 	#  them in debug mode.
 	#
+	#  NOTE: Note that when running the server at debug level 3 or
+	#  higher, this configuration ite, is ignored.
 	#
-	#  Setting this to "yes" means that the server does not print
+	#  Setting this to `yes` means that the server does not print
 	#  the contents of "secret" values such as passwords.  It
 	#  instead prints a place-holder value "<<< secret >>>", as
 	#  follows:
@@ -367,17 +369,18 @@ log {
 	#	User-Password = "<<< secret >>>"
 	#	...
 	#
-	#  Note that secret values are tracked across string
-	#  expansions, string modifications, concatenations, etc.
-	#  i.e. if a `User-Password` is placed into a `Reply-Message`,
-	#  then the value of the `Reply-Message` will also be marked
-	#  as "secret".
+	#  Secret values are tracked across string expansions, string
+	#  modifications, concatenations, etc.  i.e. if a
+	#  `User-Password` is placed into a `Reply-Message`, then the
+	#  value of the `Reply-Message` will also be marked as
+	#  "secret".
 	#
-	#  This configuration is disabled by default.  It is extremely
-	#  important for administrators to be able to debug user
-	#  logins by seeing what is actually being sent.
+	#  This configuration is enabled by default.  While doing this
+	#  can make it harder to debug the server (as passwords are
+	#  omitted from the debug output), the servers defaults are as
+	#  secure as possible.
 	#
-	#  In most cases it is not useful to suppress secrets in an
+	#  In many cases it is not useful to suppress secrets in an
 	#  attempt to "be more secure".  Any administrator who can see
 	#  the debug ouput is usually also able to view and/or modify
 	#  the servers configuration (including passwords in
@@ -386,7 +389,7 @@ log {
 	#  actual passwords in order to verify what the user is
 	#  entering.
 	#
-#	suppress_secrets = no
+	suppress_secrets = yes
 }
 
 #
