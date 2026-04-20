@@ -45,8 +45,6 @@ RCSID("$Id$")
 
 #include <freeradius-devel/unlang/xlat_func.h>
 
-
-
 #ifdef HAVE_SYSLOG_H
 #  include <syslog.h>
 #endif
@@ -60,6 +58,27 @@ main_config_t const	*main_config;				//!< Main server configuration.
 extern fr_log_t		debug_log;
 
 fr_log_t		debug_log = { .fd = -1, .dst = L_DST_NULL };
+
+/*
+ *	Configuration file overrides
+ */
+FR_DLIST_TYPES(fr_override_list)
+typedef FR_DLIST_HEAD(fr_override_list) fr_override_list_t;
+FR_DLIST_TYPEDEFS(fr_override_list, fr_override_list_t, fr_override_entry_t)
+
+static fr_override_list_t override;
+
+typedef struct {
+	char				*name;	//!< must not be 'const'
+	char		       		*value;
+	FR_DLIST_ENTRY(fr_override_list)  entry;
+} fr_override_t;
+
+FR_DLIST_FUNCS(fr_override_list, fr_override_t, entry)
+
+#define fr_override_list_foreach(_list_head, _iter) \
+	for (fr_override_t *JOIN(_next,_iter), *_iter = fr_override_list_head(_list_head); JOIN(_next,_iter) = fr_override_list_next(_list_head, _iter), _iter != NULL; _iter = JOIN(_next,_iter))
+
 
 /**********************************************************************
  *
@@ -148,11 +167,11 @@ static const conf_parser_t log_config[] = {
 
 static const conf_parser_t resources[] = {
 	/*
-	 *	Don't set a default here.  It's set in the code, below.  This means that
-	 *	the config item will *not* get printed out in debug mode, so that no one knows
-	 *	it exists.
+	 *	Don't set defaults here.  They're set in the command line.  This means
+	 *	that the config item will *not* get printed out in debug mode, so that no one knows it exists.
 	 */
-	{ FR_CONF_OFFSET_FLAGS("talloc_memory_report", CONF_FLAG_HIDDEN, main_config_t, talloc_memory_report) },						/* DO NOT SET DEFAULT */
+	{ FR_CONF_OFFSET_FLAGS("talloc_memory_report", CONF_FLAG_HIDDEN, main_config_t, talloc_memory_report) }, /* DO NOT SET DEFAULT */
+	{ FR_CONF_OFFSET_FLAGS("talloc_skip_cleanup", CONF_FLAG_HIDDEN, main_config_t, talloc_skip_cleanup) }, /* DO NOT SET DEFAULT */
 	CONF_PARSER_TERMINATOR
 };
 
@@ -997,6 +1016,8 @@ main_config_t *main_config_alloc(TALLOC_CTX *ctx)
 
 	main_config = config;
 
+	fr_override_list_init(&override);
+
 	return config;
 }
 
@@ -1212,6 +1233,17 @@ int main_config_init(main_config_t *config)
 			}
 		} /* loop over pairs in ENV */
 	} /* there's an ENV subsection */
+
+	/*
+	 *	Now that we've read the configuration files, override the values.
+	 */
+	fr_override_list_foreach(&override, ov) {
+		if (cf_pair_replace_or_add(cs, ov->name, ov->value) < 0) {
+			fprintf(stderr, "%s: Error: Cannot update configuration item '%s' - %s.\n",
+				config->name, ov->name, fr_strerror());
+			goto failure;
+		}
+	}
 
 	/*
 	 *	Parse log section of main config.
@@ -1450,11 +1482,6 @@ void main_config_hup(main_config_t *config)
 	INFO("HUP - NYI in version 4");	/* Not yet implemented in v4 */
 }
 
-#if 0
-static fr_table_num_ordered_t config_arg_table[] = {
-};
-static size_t config_arg_table_len = NUM_ELEMENTS(config_arg_table);
-
 /*
  *	Migration function that allows for command-line over-ride of
  *	data structures which need to be initialized before the
@@ -1462,50 +1489,30 @@ static size_t config_arg_table_len = NUM_ELEMENTS(config_arg_table);
  *
  *	This should really only be temporary, until we get rid of flat vs nested.
  */
-int main_config_parse_option(char const *value)
+int main_config_save_override(char const *str)
 {
-	fr_value_box_t box;
-	size_t offset;
-	char const *p;
-	bool *out;
+	char *p;
+	fr_override_t *ov;
 
-	p = strchr(value, '=');
-	if (!p) return -1;
+	MEM(ov = talloc_zero(main_config, fr_override_t));
 
-	offset = fr_table_value_by_substr(config_arg_table, value, p - value, 0);
-	if (offset) {
-		out = (bool *) (((uintptr_t) main_config) + offset);
+	MEM(ov->name = talloc_strdup(ov, str));
 
-	} else {
+	p = strchr(ov->name, '=');
+	if (!p) {
+		talloc_free(ov);
+		fr_strerror_const("Missing '='");
 		return -1;
 	}
 
-	p += 1;
-
-	fr_value_box_init(&box, FR_TYPE_BOOL, NULL, false);
-	if (fr_value_box_from_str(NULL, &box, FR_TYPE_BOOL, NULL,
-				  p, strlen(p), NULL) < 0) {
-		fr_perror("Invalid boolean \"%s\"", p);
-		fr_exit(1);
+	*p++ = '\0';
+	if (!*p) {
+		talloc_free(ov);
+		fr_strerror_const("Missing value after '='");
+		return -1;
 	}
+	ov->value = p;
 
-	*out = box.vb_bool;
-
+	fr_override_list_insert_tail(&override, ov);
 	return 0;
 }
-
-/*
- *	Allow other pieces of the code to examine the migration options.
- */
-bool main_config_migrate_option_get(char const *name)
-{
-	size_t offset;
-
-	if (!main_config) return false;
-
-	offset = fr_table_value_by_substr(config_arg_table, name, strlen(name), 0);
-	if (!offset) return false;
-
-	return *(bool *) (((uintptr_t) main_config) + offset);
-}
-#endif

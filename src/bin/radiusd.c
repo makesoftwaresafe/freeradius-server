@@ -411,13 +411,11 @@ int main(int argc, char *argv[])
 			break;
 
 		case 'S':	/* Migration support */
-#if 0
-			if (main_config_parse_option(optarg) < 0) {
-				fprintf(stderr, "%s: Unknown configuration option '%s'\n",
-					program, optarg);
+			if (main_config_save_override(optarg) < 0) {
+				fprintf(stderr, "%s: Failed saving configuration option '%s' - %s\n",
+					program, optarg, fr_strerror());
 				EXIT_WITH_FAILURE;
 			}
-#endif
 			break;
 
 		case 't':	/* no child threads */
@@ -1104,6 +1102,15 @@ do { \
 	main_config_exclusive_proc_done(main_config);
 
 cleanup:
+	/*
+	 *	If we're told to just exit without cleaning up memory,
+	 *	then do so.
+	 */
+	if (config && config->talloc_skip_cleanup) {
+		fr_atexit_global_disarm_all();
+		exit(ret);
+	}
+
 	/*
 	 *	This may not have been done earlier if we're
 	 *	exiting due to a startup error.
