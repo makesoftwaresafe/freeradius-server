@@ -779,7 +779,7 @@ int main(int argc, char *argv[])
 	default_log.print_level = true;
 
 	/*  Process the options.  */
-	while ((c = getopt(argc, argv, "c:Cd:D:f:hi:I:mMn:o:p:r:S:xXz")) != -1) {
+	while ((c = getopt(argc, argv, "c:Cd:D:f:hi:I:mMn:o:p:r:xXz")) != -1) {
 		switch (c) {
 			case 'c':
 				count = atoi(optarg);
@@ -832,16 +832,6 @@ int main(int argc, char *argv[])
 
 			case 'r':
 				receipt_file = optarg;
-				break;
-
-			case 'S': /* Migration support */
-#if 0
-				if (main_config_parse_option(optarg) < 0) {
-					fprintf(stderr, "%s: Unknown configuration option '%s'\n",
-						config->name, optarg);
-					fr_exit_now(EXIT_FAILURE);
-				}
-#endif
 				break;
 
 			case 'X':
