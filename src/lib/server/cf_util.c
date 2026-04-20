@@ -2424,3 +2424,55 @@ void _cf_canonicalize_error(CONF_ITEM *ci, ssize_t slen, char const *msg, char c
 	talloc_free(spaces);
 	talloc_free(text);
 }
+
+/*
+ *	Create or find a CONF_PAIR, including parents.
+ *
+ *	This is only used by the command-line argument '-S foo.bar=baz'
+ *
+ *	This function mangles "name" in place.
+ */
+int cf_pair_replace_or_add(CONF_SECTION *cs, char *ref, char const *value)
+{
+	char *name2;
+	CONF_PAIR *cp;
+
+	while (*ref) {
+		char *p;
+		CONF_SECTION *subcs;
+
+		p = strchr(ref, '.');
+		if (!p) break;
+
+		*(p++) = '\0';
+		if (*p == '[') {
+			name2 = p + 1;
+			p = strchr(name2, ']'); /* doesn't support nesting, too bad */
+			if (!p) {
+				fr_strerror_printf("Missing ']' after %s", name2);
+				return -1;
+			}
+			*(p++) = '\0';
+
+		} else {
+			name2 = NULL;
+		}
+
+		subcs = cf_section_find(cs, ref, name2);
+		if (!subcs) {
+			subcs = cf_section_alloc(cs, cs, ref, name2);
+			if (!subcs) return -1;
+		}
+
+		cs = subcs;
+		ref = p;
+	}
+
+	cp = cf_pair_find(cs, ref);
+	if (cp) return cf_pair_replace(cs, cp, value);
+
+	cp = cf_pair_alloc(cs, ref, value, T_OP_EQ, T_BARE_WORD, T_BARE_WORD);
+	if (!cp) return -1;
+
+	return 0;
+}
