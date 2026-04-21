@@ -591,7 +591,7 @@ static int fr_globdir_get_path(char const *dir, char const *pattern, fr_globdir_
 
 			while (*p == '/') p++;
 
-			if (!p[1]) break;
+			if (!*p) break;
 			continue;
 		}
 
