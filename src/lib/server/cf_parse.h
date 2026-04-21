@@ -456,6 +456,11 @@ typedef enum CC_HINT(flag_enum) {
 									///< generated documentation.
 	CONF_FLAG_REF			= (1 << 25),			//!< reference another conf_parser_t inline in this one
 	CONF_FLAG_OPTIONAL     		= (1 << 26),			//!< subsection is pushed only if a non-optional matching one is pushed
+	CONF_FLAG_ALWAYS_PARSE		= (1 << 27),			//!< Run this rule even against items already marked
+										///< parsed.  Useful for CF_IDENT_ANY observer rules that
+										///< want to see every item, not just the leftovers, or for
+										///< a second-pass rule that needs to re-examine something
+										///< an earlier rule already claimed.
 } conf_parser_flags_t;
 DIAG_ON(attributes)
 
