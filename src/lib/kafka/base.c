@@ -27,14 +27,6 @@
 #include <freeradius-devel/util/size.h>
 
 typedef struct {
-	rd_kafka_conf_t		*conf;
-} fr_kafka_conf_t;
-
-typedef struct {
-	rd_kafka_topic_conf_t	*conf;
-} fr_kafka_topic_conf_t;
-
-typedef struct {
 	fr_table_ptr_sorted_t	*mapping;		//!< Mapping table between string constant.
 
 	size_t			*mapping_len;		//!< Length of the mapping tables
@@ -60,7 +52,6 @@ static int _kafka_conf_free(fr_kafka_conf_t *kc)
 	return 0;
 }
 
-static inline CC_HINT(always_inline)
 fr_kafka_conf_t *kafka_conf_from_cs(CONF_SECTION *cs)
 {
 	CONF_DATA const	*cd;
@@ -90,7 +81,6 @@ static int _kafka_topic_conf_free(fr_kafka_topic_conf_t *ktc)
 	return 0;
 }
 
-static inline CC_HINT(always_inline)
 fr_kafka_topic_conf_t *kafka_topic_conf_from_cs(CONF_SECTION *cs)
 {
 	CONF_DATA const		*cd;
@@ -241,7 +231,13 @@ static int kafka_config_dflt(CONF_PAIR **out, void *parent, CONF_SECTION *cs, fr
 		fr_sbuff_t 			value_in = FR_SBUFF_IN(value, buff_len);
 		char				tmp[256];
 		fr_sbuff_t 			value_elem = FR_SBUFF_OUT(tmp, sizeof(tmp));
-		fr_sbuff_term_t			tt = FR_SBUFF_TERM(kctx->string_sep);
+		/*
+		 *	FR_SBUFF_TERM() uses sizeof() on its argument, which
+		 *	produces the wrong length for a runtime pointer.  Build
+		 *	the terminator list by hand so the length is correct.
+		 */
+		fr_sbuff_term_elem_t		tt_elem = { .str = kctx->string_sep, .len = strlen(kctx->string_sep) };
+		fr_sbuff_term_t			tt = { .len = 1, .elem = &tt_elem };
 		fr_sbuff_unescape_rules_t	ue_rules = {
 							.name = __FUNCTION__,
 							.chr = '\\'
@@ -918,7 +914,8 @@ static conf_parser_t const kafka_base_consumer_topic_config[] = {
  *
  */
 static conf_parser_t const kafka_base_consumer_topics_config[] = {
-	{ FR_CONF_SUBSECTION_GLOBAL(CF_IDENT_ANY, CONF_FLAG_MULTI, kafka_base_consumer_topic_config) },
+	{ FR_CONF_SUBSECTION_GLOBAL(CF_IDENT_ANY, CONF_FLAG_MULTI, kafka_base_consumer_topic_config),
+	  .subcs_size = sizeof(fr_kafka_topic_conf_t), .subcs_type = "fr_kafka_topic_conf_t" },
 
 	CONF_PARSER_TERMINATOR
 };
@@ -1173,7 +1170,14 @@ conf_parser_t const kafka_base_producer_config[] = {
 	{ FR_CONF_FUNC("sticky_partition_delay", FR_TYPE_TIME_DELTA, 0, kafka_config_parse, kafka_config_dflt),
 	  .uctx = &(fr_kafka_conf_ctx_t){ .property = "sticky.partitioning.linger.ms" }},
 
-	{ FR_CONF_SUBSECTION_GLOBAL("topic", CONF_FLAG_MULTI, kafka_base_producer_topics_config) }, \
+	/*
+	 *	Topic-level configuration is stored on each CONF_SECTION
+	 *	via cf_data_add rather than being written into a struct,
+	 *	so we don't need an output size here - but cf_parse asserts
+	 *	on subcs_size for multi subsections, so provide a dummy one.
+	 */
+	{ FR_CONF_SUBSECTION_GLOBAL("topic", CONF_FLAG_MULTI, kafka_base_producer_topics_config),
+	  .subcs_size = sizeof(fr_kafka_topic_conf_t), .subcs_type = "fr_kafka_topic_conf_t" }, \
 
 	CONF_PARSER_TERMINATOR
 };

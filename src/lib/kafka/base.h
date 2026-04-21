@@ -45,6 +45,22 @@ extern "C" {
 extern conf_parser_t const kafka_base_consumer_config[];
 extern conf_parser_t const kafka_base_producer_config[];
 
+typedef struct {
+	rd_kafka_conf_t		*conf;
+} fr_kafka_conf_t;
+
+typedef struct {
+	rd_kafka_topic_conf_t	*conf;
+} fr_kafka_topic_conf_t;
+
+/** Retrieve (or lazily allocate) the librdkafka conf cached on a CONF_SECTION.
+ *
+ * Populated as FR_CONF_FUNC callbacks under kafka_base_producer_config / _consumer_config
+ * parse the surrounding section.
+ */
+fr_kafka_conf_t		*kafka_conf_from_cs(CONF_SECTION *cs);
+fr_kafka_topic_conf_t	*kafka_topic_conf_from_cs(CONF_SECTION *cs);
+
 #ifdef __cplusplus
 }
 #endif
