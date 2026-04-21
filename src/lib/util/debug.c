@@ -124,6 +124,9 @@ char const CC_HINT(used) *__lsan_default_suppressions(void)
 {
 	return
 		"leak:CRYPTO_THREAD_lock_new\n"		/* OpenSSL init leak - reported by heaptrack */
+		/* librdkafka initialises Cyrus SASL on first rd_kafka_new(), which dlopens
+		 * libsasl2 and never unloads it.  Not an rlm_kafka bug. */
+		"leak:rd_kafka_sasl_cyrus_global_init\n"
 #if defined(__APPLE__)
 		"leak:*gmtsub*\n"
 		"leak:ImageLoaderMachO::doImageInit\n"
@@ -142,6 +145,14 @@ char const CC_HINT(used) *__lsan_default_suppressions(void)
 		"leak:realizeClassWithoutSwift\n"
 		"leak:tzset\n"
 		"leak:tzsetwall_basic\n"
+		/* macOS Objective-C runtime and CoreFoundation lazily allocate
+		 * metadata on first class touch (e.g. inside libsasl2 which
+		 * librdkafka dlopens, or on dispatch-apply worker threads).
+		 * These stacks have no symbols, only library paths; suppress by
+		 * path substring since the process-wide state is reclaimed on
+		 * exit by the OS. */
+		"leak:libobjc.A.dylib\n"
+		"leak:CoreFoundation.framework\n"
 #elif defined(__linux__)
 		"leak:*getpwnam_r*\n"			/* libc startup leak - reported by heaptrack */
 		"leak:_dl_init\n"			/* dl startup leak - reported by heaptrack */
