@@ -1,0 +1,30 @@
+listener_type: file
+
+# Routing (load-generator sends to kafka-producer)
+load_gen_num_of_dst_servers: 1
+load_gen_dst_server_name: kafka-producer
+
+# Load generator profile.  A modest burst that's enough to exercise
+# delivery reports without stressing CI timing budgets.
+loadgen:
+  start_pps: 5
+  max_pps: 5
+  duration: 4
+  step: 5
+  parallel: 1
+  max_backlog: 1000
+  repeat: "no"
+
+# Total Access-Requests the load-generator will emit.  Keep in sync with
+# loadgen above: start_pps * duration when start == max.
+expected_messages: 20
+
+kafka_topic: fr-multi-server-test
+
+# Test framework timeouts.  The whole test has to fit inside test_timeout;
+# state_1 waits `test_verify_timeout` for the load-gen burst, then state_2
+# waits `test_verify_timeout` for the status-server + consumer summary
+# triggers, hence test_timeout = 2 * test_verify_timeout + slack.
+test_timeout: 30
+test_verify_timeout: 10
+consumer_timeout: 15

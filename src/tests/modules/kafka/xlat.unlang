@@ -1,0 +1,42 @@
+#
+#  Exercise the %kafka.produce(topic, value) xlat across several
+#  produce cycles.  Each produce yields waiting for a delivery report;
+#  the resume path translates it to a bool (true = delivered).
+#
+
+#
+#  Value can contain request-scope xlats so we confirm the value is expanded
+#  before being handed to librdkafka.
+#
+if (!%kafka.produce('freeradius-test-xlat', "user=%{User-Name},packet=%{Packet-Type}")) {
+	test_fail
+}
+
+#
+#  Produce several messages sequentially to the same topic.  This confirms
+#  the topic handle cache works (first call creates, subsequent calls reuse)
+#  and that the delivery report dispatch loop handles back-to-back DRs
+#  without dropping any.  Unrolled because the unlang parser here doesn't
+#  accept `while` as a loop construct.
+#
+if (!%kafka.produce('freeradius-test-xlat', "sequential 1")) { test_fail }
+if (!%kafka.produce('freeradius-test-xlat', "sequential 2")) { test_fail }
+if (!%kafka.produce('freeradius-test-xlat', "sequential 3")) { test_fail }
+if (!%kafka.produce('freeradius-test-xlat', "sequential 4")) { test_fail }
+if (!%kafka.produce('freeradius-test-xlat', "sequential 5")) { test_fail }
+
+#
+#  Produce to a distinct topic to exercise a second topic handle cache entry.
+#
+if (!%kafka.produce('freeradius-test-xlat-alt', "alternate topic")) {
+	test_fail
+}
+
+#
+#  Empty value - librdkafka accepts zero-length payloads.
+#
+if (!%kafka.produce('freeradius-test-xlat', "")) {
+	test_fail
+}
+
+test_pass

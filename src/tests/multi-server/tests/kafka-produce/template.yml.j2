@@ -1,0 +1,82 @@
+timeout: {{ test_timeout }}
+state_order: sequence
+states:
+  state_1:
+    description: >
+      Drive {{ expected_messages }} Access-Request packets through the
+      kafka-producer FreeRADIUS instance.  Each packet triggers a
+      kafka.produce; the kafka-consumer container counts the resulting
+      messages on the broker side.
+    host:
+      load-generator:
+        actions:
+        - execute_command:
+            command: |
+              #
+              #  proto_load configuration via environment variables
+              #
+              {% for key, value in loadgen.items() %}
+              export TEST_LOADGEN_{{ key | upper }}="{{ value }}"
+              {% endfor %}
+
+              TEST_LOADGEN_NUM_MESSAGES=0
+              for ((pps=$TEST_LOADGEN_START_PPS; pps<=$TEST_LOADGEN_MAX_PPS; pps+=$TEST_LOADGEN_STEP)); do
+                TEST_LOADGEN_NUM_MESSAGES=$((TEST_LOADGEN_NUM_MESSAGES + TEST_LOADGEN_DURATION * pps))
+              done
+              export TEST_LOADGEN_NUM_MESSAGES
+
+              printf "Starting load-generator (expecting %d Access-Requests):\n" \
+                     "$TEST_LOADGEN_NUM_MESSAGES"
+              {% for key, value in loadgen.items() %}
+              printf "  {{ key | upper }}:%s\n" "$TEST_LOADGEN_{{ key | upper }}"
+              {% endfor %}
+
+              exec freeradius -f -l stdout
+            detach: true
+    verify:
+      timeout: {{ test_verify_timeout }}
+      trigger_mode: unordered
+      triggers:
+      # Consumer script writes this summary once it has read all N
+      # messages off the topic.  Matching it here proves every message
+      # FreeRADIUS produced actually landed on the broker.
+      - kafka-consumer-summary:
+          json:
+            result:
+              pattern:
+                reg_pattern: PASS
+            expected:
+              pattern:
+                reg_pattern: "{{ expected_messages }}"
+            received:
+              pattern:
+                reg_pattern: "{{ expected_messages }}"
+
+  state_2:
+    description: >
+      Query the load-generator's own Status-Server to confirm every
+      Access-Request it sent was answered with an Access-Accept.  Together
+      with state_1 this tells us that the entire pipeline (load-gen ->
+      kafka-producer -> kafka broker -> consumer) handled every message.
+    host:
+      load-generator:
+        actions:
+        - execute_command:
+            command: |
+              printf 'User-Name := "testuser"\nUser-Password := "testpass"' | \
+                /usr/bin/radclient -x localhost:1820 status testing123
+    verify:
+      timeout: {{ test_verify_timeout }}
+      trigger_mode: unordered
+      triggers:
+      - load-generator-status-server:
+          json:
+            Status-Server-Result:
+              pattern:
+                reg_pattern: PASS
+            Access-Request-Counter:
+              pattern:
+                reg_pattern: (\d+)
+            Access-Accept-Counter:
+              pattern:
+                reg_pattern: (\d+)

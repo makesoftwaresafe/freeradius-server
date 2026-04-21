@@ -1,1 +1,8 @@
-ok
+#
+#  Produce a message via the xlat, verify we got a true (delivered) back.
+#
+if (!%kafka.produce('freeradius-test-base', "hello from rlm_kafka base test")) {
+	test_fail
+}
+
+test_pass

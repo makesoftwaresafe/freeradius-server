@@ -1,0 +1,120 @@
+# ---------------------------------------------------------------
+#  Docker Compose Test Environment:
+#
+#                      Access-Request
+#   load-generator  -----------------> kafka-producer1
+#                                            |
+#                                            | kafka.produce
+#                                            v
+#                                           kafka (redpanda)
+#                                            |
+#                                            | consume
+#                                            v
+#                                    kafka-consumer
+#                                       (echoes each
+#                                       message back
+#                                       to the test
+#                                       framework)
+#
+#  Each Access-Request triggers exactly one produce.  kafka-consumer
+#  reads the topic and writes one listener line per received message
+#  plus a final summary line; the test framework verifies the count
+#  matches the number of packets sent.
+# ---------------------------------------------------------------
+x-common-config: &id001
+  cap_add:
+  - NET_ADMIN
+  - SYS_PTRACE
+  environment:
+    TEST_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    TEST_SUBNET: {{ test_subnet | default('172.16.0.0/12') }}
+services:
+  kafka:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    # Override the default command to advertise the broker under its
+    # compose service name.  Without this the broker tells clients to
+    # reconnect at 127.0.0.1:9092 which only works when client and
+    # broker share a network namespace.
+    command:
+    - redpanda
+    - start
+    - --kafka-addr
+    - PLAINTEXT://0.0.0.0:9092
+    - --advertise-kafka-addr
+    - PLAINTEXT://kafka:9092
+    - --overprovisioned
+    - --smp=1
+    - --memory=1G
+    - --reserve-memory=0M
+    - --node-id=0
+    - --check=false
+    - --unsafe-bypass-fsync=true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health --exit-when-healthy"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+
+  kafka-producer1:
+    image: freeradius-build:latest
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+    - ${DATA_PATH}/freeradius/kafka-producer1/radiusd.conf:/etc/raddb/radiusd.conf
+    - ${LISTENER_DIR}/:/var/run/multi-server/
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'Message-Authenticator = 0x00' | radclient localhost:1812 status testing123"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    command: ["freeradius", "-f", "-l", "stdout"]
+    <<: *id001
+
+  kafka-consumer:
+    image: confluentinc/cp-kcat:latest
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-producer1:
+        condition: service_healthy
+    volumes:
+    - ${DATA_PATH}/kafka-consumer/consume.sh:/usr/local/bin/consume.sh
+    - ${LISTENER_DIR}/:/var/run/multi-server/
+    environment:
+      TEST_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+      TEST_KAFKA_BROKER: kafka:9092
+      TEST_KAFKA_TOPIC: {{ kafka_topic | default('fr-multi-server-test') }}
+      TEST_EXPECTED_MESSAGES: "{{ expected_messages }}"
+      TEST_CONSUMER_TIMEOUT: "{{ consumer_timeout | default(30) }}"
+    entrypoint:
+    - bash
+    - /usr/local/bin/consume.sh
+    restart: "no"
+    <<: *id001
+
+  load-generator:
+    image: freeradius-build:latest
+    depends_on:
+      kafka-producer1:
+        condition: service_healthy
+      kafka-consumer:
+        condition: service_started
+    volumes:
+    - ${DATA_PATH}/freeradius/load-generator/template.d/load-generator-templates:/etc/raddb/template.d/load-generator-templates
+    - ${DATA_PATH}/freeradius/load-generator/mods-config/files/authorize:/etc/raddb/mods-config/files/authorize
+    - ${DATA_PATH}/freeradius/load-generator/radiusd.conf:/etc/raddb/radiusd.conf
+    - ${DATA_PATH}/freeradius/load-generator/load-generator-packets/:/etc/raddb/load-generator-packets/
+    - ${LISTENER_DIR}/:/var/run/multi-server/
+    entrypoint:
+    - bash
+    - -lc
+    - |
+      # Keep the container alive.  The test framework starts FreeRADIUS
+      # and runs commands via 'docker exec' so it can control timing.
+      sleep infinity
+    <<: *id001

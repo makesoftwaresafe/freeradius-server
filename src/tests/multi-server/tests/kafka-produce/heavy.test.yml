@@ -1,0 +1,38 @@
+#
+#  Heavy stress variant.  Ramps PPS aggressively across four 2s steps:
+#
+#      500 -> 1000 -> 1500 -> 2000 pps  =  10,000 requests in ~8s
+#
+#  That's enough concurrent work to exercise every worker thread and
+#  drive many back-to-back delivery reports through rlm_kafka's self-pipe,
+#  surfacing races and queue-pressure bugs the short sanity test can't.
+#
+#  Not tagged *.ci.test.yml - developers run this locally via
+#  `make test.multi-server.kafka-produce.heavy`, or via the full
+#  `make test.multi-server` sweep, but it isn't in `test.multi-server.ci`.
+#
+listener_type: file
+
+load_gen_num_of_dst_servers: 1
+load_gen_dst_server_name: kafka-producer
+
+loadgen:
+  start_pps: 500
+  max_pps: 2000
+  duration: 2
+  step: 500
+  parallel: 4
+  max_backlog: 20000
+  repeat: "no"
+
+# 2 * (500 + 1000 + 1500 + 2000) = 10000
+expected_messages: 10000
+
+kafka_topic: fr-multi-server-test
+
+# State_1 needs ~8s load-gen + enough time for a single-broker redpanda +
+# kcat to drain 10k messages.  On macOS Docker Desktop this isn't instant;
+# Linux CI should comfortably finish well inside these budgets.
+test_timeout: 360
+test_verify_timeout: 150
+consumer_timeout: 180

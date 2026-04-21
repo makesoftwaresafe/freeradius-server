@@ -57,6 +57,13 @@ inputs:
     description: SMTP server SMTP port
     default: 2525
 
+  kafka_test_server:
+    description: Kafka/Redpanda broker host
+    default: 127.0.0.1
+  kafka_test_server_port:
+    description: Kafka/Redpanda broker port
+    default: 9092
+
   memcached_test_server:
     description: Memcached server host
     default: 127.0.0.1
@@ -186,6 +193,8 @@ runs:
         IMAP_TEST_SERVER: ${{ inputs.imap_test_server }}
         IMAP_TEST_SERVER_PORT: ${{ inputs.imap_test_server_port }}
         IMAP_TEST_SERVER_SSL_PORT: ${{ inputs.imap_test_server_ssl_port }}
+        KAFKA_TEST_SERVER: ${{ inputs.kafka_test_server }}
+        KAFKA_TEST_SERVER_PORT: ${{ inputs.kafka_test_server_port }}
       run: |
         [ -d /opt/openssl ] && export PATH=/opt/openssl/bin:$PATH
 
@@ -248,6 +257,8 @@ runs:
         IMAP_TEST_SERVER: ${{ inputs.imap_test_server }}
         IMAP_TEST_SERVER_PORT: ${{ inputs.imap_test_server_port }}
         IMAP_TEST_SERVER_SSL_PORT: ${{ inputs.imap_test_server_ssl_port }}
+        KAFKA_TEST_SERVER: ${{ inputs.kafka_test_server }}
+        KAFKA_TEST_SERVER_PORT: ${{ inputs.kafka_test_server_port }}
         CACHE_MEMCACHED_TEST_SERVER: ${{ inputs.memcached_test_server }}
 
     # Restore ucf

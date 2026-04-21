@@ -134,6 +134,21 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      #
+      #  Redpanda - a Kafka-compatible broker.  rlm_kafka tests talk to this
+      #  on port 9092.  No setup script is needed: librdkafka auto-creates the
+      #  test topics on first produce.
+      #
+      redpanda:
+        image: ${{ needs.pre-ci.outputs.docker_prefix }}redpandadata/redpanda:latest
+        ports:
+          - 9092:9092
+        options: >-
+          --health-cmd "rpk cluster health --exit-when-healthy"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
 
       #  Need git installed for checkout to behave normally
@@ -192,6 +207,8 @@ jobs:
           imap_test_server_ssl_port: 1432
           smtp_test_server: 127.0.0.1
           smtp_test_server_port: 2525
+          kafka_test_server: redpanda
+          kafka_test_server_port: 9092
 
       - name: Run fuzzer
         uses: ./.github/actions/fuzzer
