@@ -33,7 +33,7 @@ logdir          = /var/log/$(package)
 pkgdocdir       = /usr/share/doc/$(package)
 confdir        = /etc/$(package)
 
-modulelist=krb5 ldap redis rest yubikey
+modulelist=kafka krb5 ldap redis rest yubikey
 sqldriverlist=freetds mysql unixodbc postgresql
 pkgs=$(shell dh_listpackages)
 
