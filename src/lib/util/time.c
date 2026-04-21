@@ -441,6 +441,7 @@ fr_slen_t fr_time_delta_to_str(fr_sbuff_t *out, fr_time_delta_t delta, fr_time_r
 {
 	fr_sbuff_t	our_out = FR_SBUFF(out);
 	char		*q;
+	char		*start;
 	int64_t		lhs = 0;
 	uint64_t	rhs = 0;
 
@@ -468,12 +469,22 @@ fr_slen_t fr_time_delta_to_str(fr_sbuff_t *out, fr_time_delta_t delta, fr_time_r
 
 		FR_SBUFF_IN_SPRINTF_RETURN(&our_out, "%" PRIu64 ".%09" PRIu64, lhs, rhs);
 	}
+	/*
+	 *	If the sprintf wrote nothing there's nothing to trim.
+	 *	(Shouldn't happen for a non-zero format like %lu.%09lu, but
+	 *	guarding keeps us from walking behind the buffer if the sbuff
+	 *	ran out of room and no bytes were written.)
+	 */
+	if (fr_sbuff_current(&our_out) == fr_sbuff_start(&our_out)) FR_SBUFF_SET_RETURN(out, &our_out);
+
 	q = fr_sbuff_current(&our_out) - 1;
+	start = fr_sbuff_start(&our_out);
 
 	/*
-	 *	Truncate trailing zeros.
+	 *	Truncate trailing zeros.  Don't walk past the start of the
+	 *	buffer - a bare "0" has no trailing zeros to strip.
 	 */
-	while (*q == '0') *(q--) = '\0';
+	while ((q > start) && (*q == '0')) *(q--) = '\0';
 
 	/*
 	 *	If there's nothing after the decimal point,
