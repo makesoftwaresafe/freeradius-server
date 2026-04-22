@@ -173,14 +173,11 @@ static rd_kafka_topic_t *kafka_thread_topic(rlm_kafka_thread_t *t, char const *n
  * @param[in] rk     UNUSED.
  * @param[in] err    librdkafka error code.
  * @param[in] reason human-readable description.
- * @param[in] opaque thread instance pointer we passed to rd_kafka_conf_set_opaque().
+ * @param[in] uctx   thread instance pointer we passed to rd_kafka_conf_set_opaque().
  */
-static void _kafka_error_cb(UNUSED rd_kafka_t *rk, int err, char const *reason, void *opaque)
+static void _kafka_error_cb(UNUSED rd_kafka_t *rk, int err, char const *reason, UNUSED void *uctx)
 {
-	rlm_kafka_thread_t	*t = opaque;
-
-	INFO("rlm_kafka (%s): %s: %s", t->inst ? "producer" : "?",
-	     rd_kafka_err2name(err), reason ? reason : "(no reason)");
+	ERROR("%s", rd_kafka_err2name(err), reason ? reason : "<UNKNOWN ERROR>");
 }
 
 /** Drain every byte currently pending on the self-pipe read end.
@@ -364,7 +361,7 @@ static int _kafka_topic_env_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out,
 	call_env_parsed_t	*parsed;
 	char const		*topic_name = cec->asked->name2;
 
-	if (!topic_name || !*topic_name) {
+	if (!topic_name) {
 		cf_log_err(ci, "kafka.produce requires a topic name, e.g. kafka.produce.<topic>");
 		return -1;
 	}
@@ -460,7 +457,7 @@ static void mod_signal(module_ctx_t const *mctx, request_t *request, UNUSED fr_s
  *     kafka {
  *         server = "broker1:9092"
  *         topic {
- *             accounting {
+ *             Accounting-Request {
  *	           request_required_acks = -1
  *                 value = %json.encode(&request.[*])
  *                 key   = &User-Name
@@ -469,7 +466,7 @@ static void mod_signal(module_ctx_t const *mctx, request_t *request, UNUSED fr_s
  *     }
  *
  *     recv Accounting-Request {
- *         kafka.produce.accounting
+ *         kafka
  *     }
  * @endcode
  *
@@ -495,16 +492,16 @@ static void mod_signal(module_ctx_t const *mctx, request_t *request, UNUSED fr_s
 static unlang_action_t CC_HINT(nonnull) mod_produce(UNUSED unlang_result_t *p_result,
 						    module_ctx_t const *mctx, request_t *request)
 {
-	rlm_kafka_thread_t		*t = talloc_get_type_abort(mctx->thread, rlm_kafka_thread_t);
+	rlm_kafka_thread_t	*t = talloc_get_type_abort(mctx->thread, rlm_kafka_thread_t);
 	rlm_kafka_env_t		*env = talloc_get_type_abort(mctx->env_data, rlm_kafka_env_t);
-	rd_kafka_topic_t		*topic;
-	rlm_kafka_msg_ctx_t		*pctx;
+	rd_kafka_topic_t	*topic;
+	rlm_kafka_msg_ctx_t	*pctx;
 
-	uint8_t const			*key = NULL;
-	size_t				key_len = 0;
+	uint8_t const		*key = NULL;
+	size_t			key_len = 0;
 
 	topic = kafka_thread_topic(t, env->topic);
-	if (!topic) {
+	if (unlikely(!topic)) {
 		/*
 		 *	Can't happen if parsing succeeded, but defensive.
 		 */
@@ -559,9 +556,7 @@ static int kafka_xlat_instantiate(xlat_inst_ctx_t const *xctx)
 	xlat_exp_t		*topic_arg;
 	xlat_exp_t const	*topic_node;
 	char const		*topic_name;
-	fr_value_box_t		topic_vb;
-
-	fr_value_box_init_null(&topic_vb);
+	fr_value_box_t		topic_vb = FR_VALUE_BOX_INITIALISER_NULL(topic_vb);
 
 	/*
 	 *	ex is the XLAT_FUNC node; its args are wrapped as
@@ -621,7 +616,7 @@ static int kafka_xlat_thread_instantiate(xlat_thread_inst_ctx_t const *xctx)
 	/*
 	 *	We didn't cache the topic name the first time through
 	 */
-	if (!inst || !inst->topic_name) return 0;
+	if (!inst->topic_name) return 0;
 
 	t = talloc_get_type_abort(xctx->mctx->thread, rlm_kafka_thread_t);
 	if (!fr_cond_assert_msg((t_inst->topic = kafka_thread_topic(t, inst->topic_name)),
@@ -940,7 +935,7 @@ static int mod_thread_instantiate(module_thread_inst_ctx_t const *mctx)
 	 *	poll the queue.
 	 */
 	if (pipe(t->wake_pipe) < 0) {
-		ERROR("pipe() failed: %s", fr_syserror(errno));
+		ERROR("pipe() failed - %s", fr_syserror(errno));
 		goto error;
 	}
 	(void) fr_nonblock(t->wake_pipe[0]);
