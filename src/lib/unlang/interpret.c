@@ -35,10 +35,275 @@ RCSID("$Id$")
 #include "unlang_priv.h"
 #include "module_priv.h"
 
+/*
+ *	Start of thread-local variables and functions.
+ */
 
 /** The default interpreter instance for this thread
  */
 static _Thread_local unlang_interpret_t *intp_thread_default;
+
+/*
+ *	For simplicity, this is just array[unlang_number].  Once we
+ *	call unlang_thread_instantiate(), the "unlang_number" above MUST
+ *	NOT change.
+ */
+static _Thread_local unlang_thread_t *unlang_thread_array;
+
+extern uint64_t unlang_number;
+uint64_t unlang_number = 1;
+
+extern fr_rb_tree_t *unlang_instruction_tree;
+
+static char const unlang_spaces[] = "                                                                                                                                                                                                                                                                ";
+
+/** Create thread-specific data structures for unlang
+ *
+ */
+int unlang_thread_instantiate(TALLOC_CTX *ctx)
+{
+	fr_rb_iter_inorder_t	iter;
+	unlang_t		*instruction;
+
+	if (unlang_thread_array) {
+		fr_strerror_const("already initialized");
+		return -1;
+	}
+
+	MEM(unlang_thread_array = talloc_zero_array(ctx, unlang_thread_t, unlang_number + 1));
+//	talloc_set_destructor(unlang_thread_array, _unlang_thread_array_free);
+
+	/*
+	 *	Instantiate each instruction with thread-specific data.
+	 */
+	for (instruction = fr_rb_iter_init_inorder(unlang_instruction_tree, &iter);
+	     instruction;
+	     instruction = fr_rb_iter_next_inorder(unlang_instruction_tree, &iter)) {
+		unlang_op_t *op;
+
+		unlang_thread_array[instruction->number].instruction = instruction;
+
+		op = &unlang_ops[instruction->type];
+
+		fr_assert(op->thread_inst_size);
+
+		/*
+		 *	Allocate any thread-specific instance data.
+		 */
+		MEM(unlang_thread_array[instruction->number].thread_inst = talloc_zero_array(unlang_thread_array, uint8_t, op->thread_inst_size));
+		talloc_set_name_const(unlang_thread_array[instruction->number].thread_inst, op->thread_inst_type);
+
+		if (op->thread_instantiate && (op->thread_instantiate(instruction, unlang_thread_array[instruction->number].thread_inst) < 0)) {
+			TALLOC_FREE(unlang_thread_array);
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+/** Get the thread-instance data for an instruction.
+ *
+ * @param[in] instruction	the instruction to use
+ * @return			a pointer to thread-local data
+ */
+void *unlang_thread_instance(unlang_t const *instruction)
+{
+	if (!instruction->number || !unlang_thread_array) return NULL;
+
+	fr_assert(instruction->number <= unlang_number);
+
+	return unlang_thread_array[instruction->number].thread_inst;
+}
+
+#ifdef WITH_PERF
+void unlang_frame_perf_init(unlang_stack_frame_t *frame)
+{
+	unlang_thread_t *t;
+	fr_time_t now;
+	unlang_t const *instruction = frame->instruction;
+
+	if (!instruction->number || !unlang_thread_array) return;
+
+	fr_assert(instruction->number <= unlang_number);
+
+	t = &unlang_thread_array[instruction->number];
+
+	t->use_count++;
+	t->yielded++;			// everything starts off as yielded
+	now = fr_time();
+
+	fr_time_tracking_start(NULL, &frame->tracking, now);
+	fr_time_tracking_yield(&frame->tracking, now);
+}
+
+void unlang_frame_perf_yield(unlang_stack_frame_t *frame)
+{
+	unlang_t const *instruction = frame->instruction;
+	unlang_thread_t *t;
+
+	if (!instruction->number || !unlang_thread_array) return;
+
+	t = &unlang_thread_array[instruction->number];
+	t->yielded++;
+	t->running--;
+
+	fr_time_tracking_yield(&frame->tracking, fr_time());
+}
+
+void unlang_frame_perf_resume(unlang_stack_frame_t *frame)
+{
+	unlang_t const *instruction = frame->instruction;
+	unlang_thread_t *t;
+
+	if (!instruction->number || !unlang_thread_array) return;
+
+	if (frame->tracking.state != FR_TIME_TRACKING_YIELDED) return;
+
+	t = &unlang_thread_array[instruction->number];
+	t->running++;
+	t->yielded--;
+
+	fr_time_tracking_resume(&frame->tracking, fr_time());
+}
+
+void unlang_frame_perf_cleanup(unlang_stack_frame_t *frame)
+{
+	unlang_t const *instruction = frame->instruction;
+	unlang_thread_t *t;
+
+	if (!instruction || !instruction->number || !unlang_thread_array) return;
+
+	fr_assert(instruction->number <= unlang_number);
+
+	t = &unlang_thread_array[instruction->number];
+
+	if (frame->tracking.state == FR_TIME_TRACKING_YIELDED) {
+		t->yielded--;
+		fr_time_tracking_resume(&frame->tracking, fr_time());
+	} else {
+		t->running--;
+	}
+
+	fr_time_tracking_end(NULL, &frame->tracking, fr_time());
+	t->tracking.running_total = fr_time_delta_add(t->tracking.running_total, frame->tracking.running_total);
+	t->tracking.waiting_total = fr_time_delta_add(t->tracking.waiting_total, frame->tracking.waiting_total);
+}
+
+
+static void unlang_perf_dump(fr_log_t *log, unlang_t const *instruction, int depth)
+{
+	unlang_group_t const *g;
+	unlang_thread_t *t;
+	char const *file;
+	int line;
+
+	if (!instruction || !instruction->number) return;
+
+	/*
+	 *	Ignore any non-group instruction.
+	 */
+	if (!((instruction->type > UNLANG_TYPE_MODULE) && (instruction->type <= UNLANG_TYPE_POLICY))) return;
+
+	/*
+	 *	Everything else is an unlang_group_t;
+	 */
+	g = unlang_generic_to_group(instruction);
+
+	if (!g->cs) return;
+
+	file = cf_filename(g->cs);
+	line = cf_lineno(g->cs);
+
+	if (depth) {
+		fr_log(log, L_DBG, file, line, "%.*s", depth, unlang_spaces);
+	}
+
+	if (debug_braces(instruction->type)) {
+		fr_log(log, L_DBG, file, line, "%s { #", instruction->debug_name);
+	} else {
+		fr_log(log, L_DBG, file, line, "%s #", instruction->debug_name);
+	}
+
+	t = &unlang_thread_array[instruction->number];
+
+	fr_log(log, L_DBG, file, line, "count=%" PRIu64 " cpu_time=%" PRId64 " yielded_time=%" PRId64 ,
+	       t->use_count, fr_time_delta_unwrap(t->tracking.running_total), fr_time_delta_unwrap(t->tracking.waiting_total));
+
+	if (!unlang_list_empty(&g->children)) {
+		unlang_list_foreach(&g->children, child) {
+			unlang_perf_dump(log, child, depth + 1);
+		}
+	}
+
+	if (debug_braces(instruction->type)) {
+		if (depth) {
+			fr_log(log, L_DBG, file, line, "%.*s", depth, unlang_spaces);
+		}
+
+		fr_log(log, L_DBG, file, line, "}");
+	}
+}
+
+void unlang_perf_virtual_server(fr_log_t *log, char const *name)
+{
+
+	virtual_server_t const	*vs = virtual_server_find(name);
+	CONF_SECTION		*cs;
+	CONF_ITEM		*ci;
+	char const		*file;
+	int			line;
+
+	if (!vs) return;
+
+	cs = virtual_server_cs(vs);
+
+	file = cf_filename(cs);
+	line = cf_lineno(cs);
+
+	fr_log(log, L_DBG, file, line, " server %s {\n", name);
+
+	/*
+	 *	Loop over the children of the virtual server, checking for unlang_t;
+	 */
+	for (ci = cf_item_next(cs, NULL);
+	     ci != NULL;
+	     ci = cf_item_next(cs, ci)) {
+		char const *name1, *name2;
+		unlang_t *instruction;
+		CONF_SECTION *subcs;
+
+		if (!cf_item_is_section(ci)) continue;
+
+		instruction = (unlang_t *)cf_data_value(cf_data_find(ci, unlang_group_t, NULL));
+		if (!instruction) continue;
+
+		subcs = cf_item_to_section(ci);
+		name1 = cf_section_name1(subcs);
+		name2 = cf_section_name2(subcs);
+		file = cf_filename(ci);
+		line = cf_lineno(ci);
+
+		if (!name2) {
+			fr_log(log, L_DBG, file, line, " %s {\n", name1);
+		} else {
+			fr_log(log, L_DBG, file, line, " %s %s {\n", name1, name2);
+		}
+
+		unlang_perf_dump(log, instruction, 2);
+
+		fr_log(log, L_DBG, file, line, " }\n");
+	}
+
+	fr_log(log, L_DBG, file, line, "}\n");
+}
+#endif
+
+/*
+ *	End of thread-local variables and functions.
+ *
+ */
+
 
 static fr_table_num_ordered_t const unlang_action_table[] = {
 	{ L("fail"),			UNLANG_ACTION_FAIL },

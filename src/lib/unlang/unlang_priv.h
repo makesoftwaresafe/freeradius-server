@@ -376,6 +376,8 @@ void		unlang_frame_perf_cleanup(unlang_stack_frame_t *frame);
 #define		unlang_frame_perf_cleanup(_x)
 #endif
 
+#define debug_braces(_type)    (unlang_ops[_type].flag & UNLANG_OP_FLAG_DEBUG_BRACES)
+
 void	unlang_stack_signal(request_t *request, fr_signal_t action, int limit);
 
 typedef struct {
