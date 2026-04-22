@@ -234,15 +234,11 @@ char		*talloc_bstr_realloc(TALLOC_CTX *ctx, char *in, size_t inlen);
 
 char		*talloc_buffer_append_variadic_buffer(TALLOC_CTX *ctx, char *to, int argc, ...);
 
-int		talloc_memcmp_array(uint8_t const *a, uint8_t const *b);
-
 int		talloc_memcmp_bstr(char const *a, char const *b);
 
 int		talloc_decrease_ref_count(void const *ptr);
 
 void		**talloc_array_null_terminate(void **array);
-
-void		**talloc_array_null_strip(void **array);
 
 /** Free const'd memory
  *
@@ -257,11 +253,6 @@ static inline int talloc_const_free(void const *ptr)
 
 TALLOC_CTX		*talloc_autofree_context_global(void);
 TALLOC_CTX		*talloc_autofree_context_thread_local(void);
-
-typedef struct talloc_child_ctx_s TALLOC_CHILD_CTX;
-
-TALLOC_CHILD_CTX	*talloc_child_ctx_init(TALLOC_CTX *ctx);
-TALLOC_CHILD_CTX	*talloc_child_ctx_alloc(TALLOC_CHILD_CTX *parent) CC_HINT(nonnull);
 
 #ifdef __cplusplus
 }
