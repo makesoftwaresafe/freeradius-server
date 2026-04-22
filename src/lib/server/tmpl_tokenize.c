@@ -2616,6 +2616,41 @@ static fr_slen_t tmpl_afrom_value_substr(TALLOC_CTX *ctx, tmpl_t **out, fr_sbuff
 	FR_SBUFF_SET_RETURN(in, &our_in);
 }
 
+/** Match the bareword `null` and return a TMPL_TYPE_DATA carrying an FR_TYPE_NULL box
+ *
+ * Used as an explicit "no value" placeholder by callers that want the
+ * argument slot to remain present (so positional xlat arguments line
+ * up) without carrying any bytes.  Downstream code distinguishes an
+ * intentional null from an uninitialised one by checking
+ * `fr_type_is_null(vb->type)` after the box has made it into an arg
+ * list - if it reaches the xlat body, the author put it there.
+ *
+ * @param[in] ctx     to allocate tmpl to.
+ * @param[out] out    where to write tmpl.
+ * @param[in] in      sbuff to parse.
+ * @param[in] p_rules formatting rules.
+ * @return
+ *	- 0 sbuff does not contain the `null` keyword.
+ *	- > 0 how many bytes were parsed.
+ */
+static fr_slen_t tmpl_afrom_null_substr(TALLOC_CTX *ctx, tmpl_t **out, fr_sbuff_t *in,
+					fr_sbuff_parse_rules_t const *p_rules)
+{
+	fr_sbuff_t	our_in = FR_SBUFF(in);
+	tmpl_t		*vpt;
+
+	if (!fr_sbuff_adv_past_strcase_literal(&our_in, "null")) return 0;
+	if (!tmpl_substr_terminal_check(&our_in, p_rules)) return 0;
+
+	MEM(vpt = tmpl_alloc(ctx, TMPL_TYPE_DATA, T_BARE_WORD,
+			     fr_sbuff_start(&our_in), fr_sbuff_used(&our_in)));
+	fr_value_box_init(&vpt->data.literal, FR_TYPE_NULL, NULL, false);
+
+	*out = vpt;
+
+	FR_SBUFF_SET_RETURN(in, &our_in);
+}
+
 /** Parse a truth value
  *
  * @param[in] ctx	to allocate tmpl to.
@@ -3379,6 +3414,16 @@ fr_slen_t tmpl_afrom_substr(TALLOC_CTX *ctx, tmpl_t **out,
 			if (slen > 0) goto done_bareword;
 			fr_assert(!*out);
 		}
+
+		/*
+		 *	See if it's the `null` keyword.  Matched before the
+		 *	numeric / address / enum branches so it isn't
+		 *	shadowed by a dictionary attribute literally named
+		 *	"null".
+		 */
+		slen = tmpl_afrom_null_substr(ctx, out, &our_in, p_rules);
+		if (slen > 0) goto done_bareword;
+		fr_assert(!*out);
 
 		/*
 		 *	See if it's a boolean value
@@ -5354,11 +5399,12 @@ void tmpl_verify(char const *file, int line, tmpl_t const *vpt)
 					     file, line);
 		}
 
-		if (fr_type_is_null(tmpl_value_type(vpt))) {
-			fr_fatal_assert_fail("CONSISTENCY CHECK FAILED %s[%u]: TMPL_TYPE_DATA type was "
-					     "FR_TYPE_NULL (uninitialised)", file, line);
-		}
-
+		/*
+		 *	An FR_TYPE_NULL box inside a TMPL_TYPE_DATA used to
+		 *	fire here as the "you forgot to init the box" signal,
+		 *	but the `null` keyword (see tmpl_afrom_null_substr)
+		 *	deliberately constructs one.  Accept it.
+		 */
 		if (tmpl_value_type(vpt) >= FR_TYPE_MAX) {
 			fr_fatal_assert_fail("CONSISTENCY CHECK FAILED %s[%u]: TMPL_TYPE_DATA type was "
 					     "%i (outside the range of fr_type_ts)", file, line, tmpl_value_type(vpt));

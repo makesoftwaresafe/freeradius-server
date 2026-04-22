@@ -2616,6 +2616,12 @@ static inline int fr_value_box_cast_to_strvalue(TALLOC_CTX *ctx, fr_value_box_t 
 
 	switch (src->type) {
 	/*
+	 *	Explicit null casts to an empty string.
+	 */
+	case FR_TYPE_NULL:
+		return fr_value_box_bstrndup(ctx, dst, dst_enumv, "", 0, src->tainted);
+
+	/*
 	 *	The presentation format of octets is hex
 	 *	What we actually want here is the raw string
 	 */
@@ -2667,6 +2673,13 @@ static inline int fr_value_box_cast_to_octets(TALLOC_CTX *ctx, fr_value_box_t *d
 	fr_value_box_safety_copy_changed(dst, src);
 
 	switch (src->type) {
+	/*
+	 *	An explicit null (e.g. the `null` keyword in unlang)
+	 *	casts to a zero-length octets box.
+	 */
+	case FR_TYPE_NULL:
+		return fr_value_box_memdup(ctx, dst, dst_enumv, NULL, 0, src->tainted);
+
 	/*
 	 *	<string> (excluding terminating \0)
 	 */
@@ -2746,7 +2759,6 @@ static inline int fr_value_box_cast_to_octets(TALLOC_CTX *ctx, fr_value_box_t *d
 	case FR_TYPE_VENDOR:
 	case FR_TYPE_UNION:
 	case FR_TYPE_INTERNAL:
-	case FR_TYPE_NULL:
 	case FR_TYPE_ATTR:
 	case FR_TYPE_COMBO_IP_ADDR: /* the types should have been realized to ipv4 / ipv6 */
 	case FR_TYPE_COMBO_IP_PREFIX:
