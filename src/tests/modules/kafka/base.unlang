@@ -10,7 +10,7 @@
 %exec('/bin/sh', '-c', '"$KAFKA_SUBSCRIBE" freeradius-test-base $ENV{OUTPUT_DIR}kafka-base.json 1')
 
 control.Tmp-String-0 := "hello from rlm_kafka base test"
-if (!%kafka.produce('freeradius-test-base', control.Tmp-String-0)) {
+if (!%kafka.produce('freeradius-test-base', '', control.Tmp-String-0)) {
 	test_fail
 }
 

@@ -32,7 +32,7 @@ redundant {
 	timeout 200ms {
 		parallel {
 			redundant {
-				%kafka_unreachable.produce('freeradius-test-unreachable', "cancelled mid-flight")
+				%kafka_unreachable.produce('freeradius-test-unreachable', '', "cancelled mid-flight")
 			}
 			group {
 				%cancel(0)
@@ -53,7 +53,7 @@ redundant {
 #  RD_KAFKA_RESP_ERR__MSG_TIMED_OUT.  kafka_produce_resume translates
 #  that to a false return from the xlat.
 #
-if (%kafka_unreachable.produce('freeradius-test-unreachable', "doomed")) {
+if (%kafka_unreachable.produce('freeradius-test-unreachable', '', "doomed")) {
 	test_fail
 }
 
@@ -61,7 +61,7 @@ if (%kafka_unreachable.produce('freeradius-test-unreachable', "doomed")) {
 #  And one more, to prove the worker's produce path is still healthy
 #  after both the cancel and the natural failure above.
 #
-if (%kafka_unreachable.produce('freeradius-test-unreachable', "also doomed")) {
+if (%kafka_unreachable.produce('freeradius-test-unreachable', '', "also doomed")) {
 	test_fail
 }
 
