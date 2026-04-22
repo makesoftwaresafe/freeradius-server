@@ -912,12 +912,10 @@ static int cf_section_parse_init(CONF_SECTION *cs, void *base, conf_parser_t con
 	}
 
 	/*
-	 *	FR_CONF_FUNC rules own their own output routing via the
-	 *	parse function - there's no guaranteed offset into `base`
-	 *	for us to NULL out.  The func decides where the result
-	 *	lives.
+	 *	CONF_FLAG_NO_OUTPUT means the rule has no framework-managed
+	 *	output slot - nothing to NULL-init.
 	 */
-	if (rule->func) return 0;
+	if (rule->flags & CONF_FLAG_NO_OUTPUT) return 0;
 
 	if (rule->data) {
 		*(char **) rule->data = NULL;
@@ -992,6 +990,8 @@ static int cf_subsection_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_SECT
 	bool const		skip_parsed = (rule->name1 == CF_IDENT_ANY) &&
 					      !(rule->flags & CONF_FLAG_ALWAYS_PARSE);
 
+	bool const		no_output = (rule->flags & CONF_FLAG_NO_OUTPUT);
+
 	uint8_t			**array = NULL;
 
 	fr_assert(rule->flags & CONF_FLAG_SUBSECTION);
@@ -1028,7 +1028,7 @@ static int cf_subsection_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_SECT
 		 */
 	 	if (!subcs_size) return cf_section_parse(ctx, out, subcs);
 
-		if (out) {
+		if (out && !no_output) {
 			MEM(buff = talloc_zero_array(ctx, uint8_t, subcs_size));
 			if (rule->subcs_type) talloc_set_name_const(buff, rule->subcs_type);
 		}
@@ -1039,7 +1039,7 @@ static int cf_subsection_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_SECT
 			return ret;
 		}
 
-		if (out) *((uint8_t **)out) = buff;
+		if (out && !no_output) *((uint8_t **)out) = buff;
 
 		return 0;
 	}
@@ -1058,7 +1058,7 @@ static int cf_subsection_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_SECT
 	/*
 	 *	Allocate an array to hold the subsections
 	 */
-	if (out) {
+	if (out && !no_output) {
 		MEM(array = talloc_zero_array(ctx, uint8_t *, count));
 		if (rule->subcs_type) talloc_set_name(array, "%s *", rule->subcs_type);
 	}
@@ -1109,7 +1109,7 @@ static int cf_subsection_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_SECT
 		}
 	}
 
-	if (out) *((uint8_t ***)out) = array;
+	if (out && !no_output) *((uint8_t ***)out) = array;
 
 	return 0;
 }
@@ -1133,7 +1133,16 @@ static int cf_section_parse_rule(TALLOC_CTX *ctx, void *base, CONF_SECTION *cs, 
 
 	if (rule->data) {
 		data = rule->data; /* prefer this. */
-	} else if (base) {
+	} else if (base &&
+		   (!(rule->flags & CONF_FLAG_NO_OUTPUT) || (rule->flags & CONF_FLAG_SUBSECTION))) {
+		/*
+		 *	CONF_FLAG_NO_OUTPUT on a pair rule means leave
+		 *	data NULL so the framework won't write through
+		 *	base+offset.  For subsections it only suppresses
+		 *	the end-of-MULTI array write (handled inside
+		 *	cf_subsection_parse) - we still need to pass
+		 *	`base` through so nested rules can address into it.
+		 */
 		data = ((uint8_t *)base) + rule->offset;
 	}
 
@@ -1406,7 +1415,7 @@ int cf_section_parse_pass2(void *base, CONF_SECTION *cs)
 			 *	Select base by whether this is a nested struct,
 			 *	or a pointer to another struct.
 			 */
-			if (!base) {
+			if (!base || (flags & CONF_FLAG_NO_OUTPUT)) {
 				subcs_base = NULL;
 			} else if (multi) {
 				size_t		j, len;
@@ -1437,7 +1446,7 @@ int cf_section_parse_pass2(void *base, CONF_SECTION *cs)
 		 *	Figure out which data we need to fix.
 		 */
 		data = rule->data; /* prefer this. */
-		if (!data && base) data = ((char *)base) + rule->offset;
+		if (!data && base && !(rule->flags & CONF_FLAG_NO_OUTPUT)) data = ((char *)base) + rule->offset;
 		if (!data) continue;
 
 		/*
