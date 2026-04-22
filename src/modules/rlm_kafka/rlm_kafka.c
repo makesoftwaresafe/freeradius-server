@@ -341,11 +341,11 @@ rlm_kafka_msg_ctx_t *kafka_produce_enqueue(rlm_kafka_thread_t *t, request_t *req
 		.partition = RD_KAFKA_PARTITION_UA,
 		.offset = -1
 	};
-	if (rd_kafka_produce(topic, RD_KAFKA_PARTITION_UA, RD_KAFKA_MSG_F_COPY,
-			     /* librdkafka copies under MSG_F_COPY */
-			     (void *)(uintptr_t) value, value_len,
-			     key, key_len,
-			     pctx) != 0) {
+	if (unlikely(rd_kafka_produce(topic, RD_KAFKA_PARTITION_UA, RD_KAFKA_MSG_F_COPY,
+				      /* librdkafka copies under MSG_F_COPY */
+				      (void *)(uintptr_t) value, value_len,
+				      key, key_len,
+				      pctx) != 0)) {
 		rd_kafka_resp_err_t	err = rd_kafka_last_error();
 
 		talloc_free(pctx);
@@ -562,7 +562,7 @@ static unlang_action_t CC_HINT(nonnull) mod_produce(UNUSED unlang_result_t *p_re
 	pctx = kafka_produce_enqueue(t, request, topic,
 				     key, key_len,
 				     env->value->vb_octets, env->value->vb_length);
-	if (!pctx) RETURN_UNLANG_FAIL;
+	if (unlikely(!pctx)) RETURN_UNLANG_FAIL;
 
 	return unlang_module_yield(request, mod_resume, mod_signal,
 				   ~FR_SIGNAL_CANCEL, pctx);
@@ -688,7 +688,7 @@ static xlat_action_t kafka_xlat_produce_resume(TALLOC_CTX *xctx_ctx, fr_dcursor_
 	fr_value_box_t		*vb;
 	bool			delivered = (pctx->err == RD_KAFKA_RESP_ERR_NO_ERROR);
 
-	if (!delivered) REDEBUG("Kafka produce failed: %s", rd_kafka_err2str(pctx->err));
+	if (unlikely(!delivered)) REDEBUG("Kafka produce failed: %s", rd_kafka_err2str(pctx->err));
 
 	MEM(vb = fr_value_box_alloc(xctx_ctx, FR_TYPE_BOOL, NULL));
 	vb->vb_bool = delivered;
@@ -761,7 +761,7 @@ static xlat_action_t kafka_xlat_produce(UNUSED TALLOC_CTX *xctx_ctx, UNUSED fr_d
 	 */
 	topic = t_inst ? t_inst->topic : NULL;
 	if (!topic) topic = kafka_thread_topic(t, topic_vb->vb_strvalue);
-	if (!topic) {
+	if (unlikely(!topic)) {
 		REDEBUG("Kafka topic '%s' is not declared in the module config", topic_vb->vb_strvalue);
 		return XLAT_ACTION_FAIL;
 	}
@@ -769,7 +769,7 @@ static xlat_action_t kafka_xlat_produce(UNUSED TALLOC_CTX *xctx_ctx, UNUSED fr_d
 	pctx = kafka_produce_enqueue(t, request, topic,
 				     NULL, 0,
 				     value_vb->vb_octets, value_vb->vb_length);
-	if (!pctx) return XLAT_ACTION_FAIL;
+	if (unlikely(!pctx)) return XLAT_ACTION_FAIL;
 
 	return unlang_xlat_yield(request, kafka_xlat_produce_resume, kafka_xlat_produce_signal,
 				 ~FR_SIGNAL_CANCEL, pctx);
@@ -801,7 +801,7 @@ static void _kafka_delivery_report_cb(UNUSED rd_kafka_t *rk, rd_kafka_message_t 
 
 	fr_dlist_remove(&pctx->t->inflight, pctx);
 
-	if (!pctx->request) {
+	if (unlikely(!pctx->request)) {
 		talloc_free(pctx);
 		return;
 	}
