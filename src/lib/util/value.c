@@ -2616,10 +2616,12 @@ static inline int fr_value_box_cast_to_strvalue(TALLOC_CTX *ctx, fr_value_box_t 
 
 	switch (src->type) {
 	/*
-	 *	Explicit null casts to an empty string.
+	 *	An explicit `null` has no representation to cast from.
+	 *	Refuse rather than silently coerce to an empty string.
 	 */
 	case FR_TYPE_NULL:
-		return fr_value_box_bstrndup(ctx, dst, dst_enumv, "", 0, src->tainted);
+		fr_strerror_const("Cannot cast null to a string");
+		return -1;
 
 	/*
 	 *	The presentation format of octets is hex
@@ -2674,11 +2676,12 @@ static inline int fr_value_box_cast_to_octets(TALLOC_CTX *ctx, fr_value_box_t *d
 
 	switch (src->type) {
 	/*
-	 *	An explicit null (e.g. the `null` keyword in unlang)
-	 *	casts to a zero-length octets box.
+	 *	An explicit `null` has no representation to cast from.
+	 *	Refuse rather than silently coerce to zero-length octets.
 	 */
 	case FR_TYPE_NULL:
-		return fr_value_box_memdup(ctx, dst, dst_enumv, NULL, 0, src->tainted);
+		fr_strerror_const("Cannot cast null to octets");
+		return -1;
 
 	/*
 	 *	<string> (excluding terminating \0)

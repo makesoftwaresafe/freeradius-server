@@ -341,6 +341,14 @@ static int xlat_validate_function_arg(xlat_arg_parser_t const *arg_p, xlat_exp_t
 	}
 
 	/*
+	 *	An explicit `null` literal is preserved unchanged - the xlat
+	 *	body receives an FR_TYPE_NULL box in this arg slot and can
+	 *	decide what to do with it.  Casting would collapse it into a
+	 *	zero-length value of the declared type and hide the intent.
+	 */
+	if (fr_type_is_null(node->data.type)) return 0;
+
+	/*
 	 *	Cast (or parse) the input data to the expected argument data type.
 	 */
 	if (fr_value_box_cast_in_place(node, &node->data, arg_p->type, NULL) < 0) {

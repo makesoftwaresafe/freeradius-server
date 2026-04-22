@@ -462,8 +462,12 @@ static xlat_action_t xlat_process_arg_list(TALLOC_CTX *ctx, fr_value_box_list_t 
 
 	/*
 	 *	Concatenate child boxes, then cast to the desired type.
+	 *	Skip for an explicit `null` - concatenating would force
+	 *	a cast of FR_TYPE_NULL to the arg's declared type, which
+	 *	would either error or silently coerce to a zero-length
+	 *	value.  Let the null box reach check_types intact.
 	 */
-	if (concat) {
+	if (concat && !(fr_value_box_list_num_elements(list) == 1 && fr_type_is_null(vb->type))) {
 		if (fr_value_box_list_concat_in_place(ctx, vb, list, type, FR_VALUE_BOX_LIST_FREE, true, SIZE_MAX) < 0) {
 			RPEDEBUG("Function \"%s\" failed concatenating arguments to type %s", name, fr_type_to_str(type));
 			return XLAT_ACTION_FAIL;
@@ -472,6 +476,8 @@ static xlat_action_t xlat_process_arg_list(TALLOC_CTX *ctx, fr_value_box_list_t 
 
 		goto check_types;
 	}
+
+	if (concat) goto check_types;
 
 	/*
 	 *	Only a single child box is valid here.  Check there is
@@ -489,6 +495,16 @@ static xlat_action_t xlat_process_arg_list(TALLOC_CTX *ctx, fr_value_box_list_t 
 
 	check_types:
 		if (!fr_type_is_leaf(arg->type)) goto check_non_leaf;
+
+		/*
+		 *	FR_TYPE_NULL is an explicit "no value" placeholder
+		 *	(the `null` keyword).  Passing it through to the
+		 *	xlat body lets the implementation distinguish it
+		 *	from a zero-length value of the declared type; the
+		 *	author opted-in by writing `null` in the source.
+		 *	Casting it would paper over the distinction.
+		 */
+		if (fr_type_is_null(vb->type)) return XLAT_ACTION_DONE;
 
 		/*
 		 *	Cast to the correct type if necessary.
