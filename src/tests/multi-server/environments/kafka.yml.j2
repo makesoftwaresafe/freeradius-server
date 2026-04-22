@@ -50,12 +50,19 @@ services:
     - --check=false
     - --unsafe-bypass-fsync=true
     restart: unless-stopped
+    #
+    #  Redpanda needs longer than you'd think on a busy CI runner: the
+    #  first-launch data directory scaffolding can take 30-60s before
+    #  rpk admin is reachable, and the cluster-health probe only returns
+    #  OK once the controller topic has settled.  Give it up to ~4 min
+    #  before declaring the container unhealthy.
+    #
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster health --exit-when-healthy"]
-      interval: 2s
-      timeout: 5s
-      retries: 15
-      start_period: 60s
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 120s
 
   kafka-producer1:
     image: freeradius-build:latest
