@@ -944,42 +944,6 @@ static void test_talloc_typed_memdup(void)
 }
 
 /*
- *	talloc_buffer_append_buffer - concatenate talloc strings
- */
-static void test_talloc_buffer_append_buffer(void)
-{
-	TALLOC_CTX	*ctx;
-	char		*a, *result;
-
-	ctx = talloc_init_const("test");
-
-	TEST_CASE("Concatenate two talloc strings");
-	a = talloc_strdup(ctx, "hello ");
-	{
-		char *b = talloc_strdup(ctx, "world");
-		result = talloc_buffer_append_buffer(ctx, a, b);
-		TEST_ASSERT(result != NULL);
-		TEST_CHECK(strcmp(result, "hello world") == 0);
-		talloc_free(b);
-	}
-
-	TEST_CASE("NULL first arg returns NULL");
-	{
-		char *b = talloc_strdup(ctx, "test");
-		result = talloc_buffer_append_buffer(ctx, NULL, b);
-		TEST_CHECK(result == NULL);
-		talloc_free(b);
-	}
-
-	TEST_CASE("NULL second arg returns NULL");
-	a = talloc_strdup(ctx, "hello");
-	result = talloc_buffer_append_buffer(ctx, a, NULL);
-	TEST_CHECK(result == NULL);
-
-	talloc_free(ctx);
-}
-
-/*
  *	talloc_array_null_terminate / talloc_array_null_strip
  */
 static void test_talloc_array_null_terminate(void)
@@ -1269,7 +1233,6 @@ TEST_LIST = {
 	{ "talloc_memcmp_array",		test_talloc_memcmp_array },
 	{ "talloc_memcmp_bstr",			test_talloc_memcmp_bstr },
 	{ "talloc_typed_memdup",		test_talloc_typed_memdup },
-	{ "talloc_buffer_append_buffer",	test_talloc_buffer_append_buffer },
 	{ "talloc_array_null_terminate",	test_talloc_array_null_terminate },
 	{ "talloc_destructor_add",		test_talloc_destructor_add },
 	{ "talloc_link_ctx",			test_talloc_link_ctx },

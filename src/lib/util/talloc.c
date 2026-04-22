@@ -698,39 +698,6 @@ char *talloc_bstr_realloc(TALLOC_CTX *ctx, char *in, size_t inlen)
 	return n;
 }
 
-/** Concatenate to + from
- *
- * @param[in] ctx	to allocate realloced buffer in.
- * @param[in] to	talloc string buffer to append to.
- * @param[in] from	talloc string buffer to append.
- * @return
- *	- NULL if to or from are NULL or if the realloc fails.
- *	  Note: You'll still need to free to if this function
- *	  returns NULL.
- *	- The concatenation of to + from.  After this function
- *	  returns to may point to invalid memory and should
- *	  not be used.
- */
-char *talloc_buffer_append_buffer(TALLOC_CTX *ctx, char *to, char const *from)
-{
-	size_t to_len, from_len, total_len;
-	char *out;
-
-	if (!to || !from) return NULL;
-
-	to_len = talloc_array_length(to);
-	from_len = talloc_array_length(from);
-	total_len = to_len + (from_len - 1);
-
-	out = talloc_realloc(ctx, to, char, total_len);
-	if (!out) return NULL;
-
-	memcpy(out + (to_len - 1), from, from_len);
-	out[total_len - 1] = '\0';
-
-	return out;
-}
-
 /** Concatenate to + ...
  *
  * @param[in] ctx	to allocate realloced buffer in.

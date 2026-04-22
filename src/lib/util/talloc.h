@@ -232,8 +232,6 @@ char		*talloc_bstr_append(TALLOC_CTX *ctx, char *to, char const *from, size_t fr
 
 char		*talloc_bstr_realloc(TALLOC_CTX *ctx, char *in, size_t inlen);
 
-char		*talloc_buffer_append_buffer(TALLOC_CTX *ctx, char *to, char const *from);
-
 char		*talloc_buffer_append_variadic_buffer(TALLOC_CTX *ctx, char *to, int argc, ...);
 
 int		talloc_memcmp_array(uint8_t const *a, uint8_t const *b);

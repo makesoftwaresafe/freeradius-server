@@ -2104,7 +2104,7 @@ void _cf_vlog_perr(fr_log_type_t type, CONF_ITEM const *ci, char const *file, in
 			char *first;
 
 			first = talloc_bstrdup(pool, prefix);
-			talloc_buffer_append_buffer(pool, first, f_rules->first_prefix);
+			MEM(talloc_strndup_append_buffer(first, f_rules->first_prefix, SIZE_MAX));
 
 			our_f_rules.first_prefix = first;
 		} else {
@@ -2118,7 +2118,7 @@ void _cf_vlog_perr(fr_log_type_t type, CONF_ITEM const *ci, char const *file, in
 			char *subsq;
 
 			subsq = talloc_bstrdup(pool, prefix);
-			talloc_buffer_append_buffer(pool, subsq, f_rules->subsq_prefix);
+			MEM(talloc_strndup_append_buffer(subsq, f_rules->subsq_prefix, SIZE_MAX));
 
 			our_f_rules.subsq_prefix = subsq;
 		} else {
