@@ -194,8 +194,9 @@ static rd_kafka_topic_t *kafka_thread_topic(rlm_kafka_thread_t *t, char const *n
  * @param[in] reason human-readable description.
  * @param[in] uctx   thread instance pointer we passed to rd_kafka_conf_set_opaque().
  */
-static void _kafka_error_cb(UNUSED rd_kafka_t *rk, int err, char const *reason, void *uctx)
+static void _kafka_error_cb(UNUSED rd_kafka_t *rk, int err, char const *reason, UNUSED void *uctx)
 {
+#ifndef NDEBUG
 	rlm_kafka_thread_t	*t = talloc_get_type_abort(uctx, rlm_kafka_thread_t);
 
 	/*
@@ -205,6 +206,7 @@ static void _kafka_error_cb(UNUSED rd_kafka_t *rk, int err, char const *reason, 
 	 *	around our per-thread state would be unsafe.
 	 */
 	fr_assert(pthread_equal(pthread_self(), t->worker_tid) != 0);
+#endif
 
 	ERROR("%s", rd_kafka_err2name(err), reason ? reason : "<UNKNOWN ERROR>");
 }
@@ -851,6 +853,7 @@ static void _kafka_delivery_report_cb(UNUSED rd_kafka_t *rk, rd_kafka_message_t 
 	if (!msg->_private) return;
 	pctx = talloc_get_type_abort(msg->_private, rlm_kafka_msg_ctx_t);
 
+#ifndef NDEBUG
 	/*
 	 *	DR dispatch must happen on the thread that owns the
 	 *	producer - librdkafka is only allowed to wake us via
@@ -858,6 +861,7 @@ static void _kafka_delivery_report_cb(UNUSED rd_kafka_t *rk, rd_kafka_message_t 
 	 *	invalidate the no-lock handling of the inflight list.
 	 */
 	fr_assert(pthread_equal(pthread_self(), pctx->t->worker_tid) != 0);
+#endif
 
 	fr_dlist_remove(&pctx->t->inflight, pctx);
 
