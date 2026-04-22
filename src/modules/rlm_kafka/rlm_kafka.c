@@ -62,7 +62,7 @@ USES_APPLE_DEPRECATED_API
 #include <fcntl.h>
 #include <unistd.h>
 
-/** Module instance data.
+/** Module instance data
  *
  * `fr_kafka_conf_t` is embedded as the first member so
  * `KAFKA_BASE_CONFIG` / `KAFKA_PRODUCER_CONFIG` `FR_CONF_OFFSET`
@@ -82,7 +82,7 @@ typedef struct {
 							//!< mod_instantiate so we don't reformat per line.
 } rlm_kafka_t;
 
-/** Per-thread topic handle.
+/** Per-thread topic handle
  *
  * One per declared topic, created at thread_instantiate.  rd_kafka_topic_t
  * is per-producer so each worker thread has its own.
@@ -95,7 +95,7 @@ typedef struct {
 
 typedef struct rlm_kafka_thread_s rlm_kafka_thread_t;
 
-/** Per produce() invocation context.
+/** Per produce() invocation context
  *
  * Lives on the heap (not the request) because the delivery report callback
  * must be able to find it via librdkafka's opaque pointer even if the
@@ -126,7 +126,7 @@ struct rlm_kafka_thread_s {
 	fr_dlist_head_t		inflight;	//!< outstanding rlm_kafka_msg_ctx_t
 };
 
-/** Call env for `kafka.produce.<topic>`.
+/** Call env for `kafka.produce.<topic>`
  *
  * Topic comes from the method's second identifier and is validated
  * against the declared-topic list at call_env parse time, then stashed
@@ -138,7 +138,7 @@ typedef struct {
 	fr_value_box_t		*value;	//!< message payload
 } rlm_kafka_env_t;
 
-/** @param[in] a  rlm_kafka_topic_t.
+/** @param[in] a  rlm_kafka_topic_t
  *  @param[in] b  same.
  *  @return `strcmp` ordering of `a->name` and `b->name`. */
 static int8_t topic_name_cmp(void const *a, void const *b)
@@ -155,7 +155,7 @@ static int _topic_free(rlm_kafka_topic_t *h)
 	return 0;
 }
 
-/** Look up a per-thread topic handle by name.
+/** Look up a per-thread topic handle by name
  *
  * @param[in] t    thread instance.
  * @param[in] name topic name (must have been declared at config time).
@@ -170,7 +170,7 @@ static rd_kafka_topic_t *kafka_thread_topic(rlm_kafka_thread_t *t, char const *n
 	return h ? h->kt : NULL;
 }
 
-/** Broker-level error callback (connection failures etc).
+/** Broker-level error callback (connection failures etc)
  *
  * Not delivery reports - those come via dr_msg_cb.
  *
@@ -225,7 +225,7 @@ static void _kafka_log_cb(rd_kafka_t const *rk, int level, char const *fac, char
 	}
 }
 
-/** Drain every byte currently pending on the self-pipe read end.
+/** Drain every byte currently pending on the self-pipe read end
  *
  * librdkafka suppresses subsequent writes until the queue has been served,
  * so there's rarely more than one byte to drain, but the non-blocking read
@@ -237,7 +237,7 @@ static void kafka_drain_pipe(int fd)
 	while (read(fd, buf, sizeof(buf)) > 0);
 }
 
-/** Pipe became readable because librdkafka wrote a wake byte.
+/** Pipe became readable because librdkafka wrote a wake byte
  *
  * Drain the pipe, then drain the producer's main queue by polling with a zero
  * timeout.  `rd_kafka_poll()` dispatches delivery reports
@@ -256,7 +256,7 @@ static void _kafka_fd_readable(UNUSED fr_event_list_t *el, int fd, UNUSED int fl
 	while (rd_kafka_poll(t->rk, 0) > 0);
 }
 
-/** Self-pipe error.
+/** Self-pipe error
  *
  * The pipe is ours - we create it at thread start, keep both ends
  * non-blocking, and librdkafka only writes one wake byte at a time.
@@ -276,7 +276,7 @@ static void _kafka_fd_error(UNUSED fr_event_list_t *el, int fd, UNUSED int flags
 	FATAL("kafka - self-pipe error (fd=%d): %s", fd, fr_syserror(fd_errno));
 }
 
-/** Translate a librdkafka delivery-report error into a module rcode.
+/** Translate a librdkafka delivery-report error into a module rcode
  *
  * @param[in] request  associated request (for logging).
  * @param[in] pctx     produce context with the stashed error.
@@ -309,7 +309,7 @@ static rlm_rcode_t kafka_err_to_rcode(request_t *request, rlm_kafka_msg_ctx_t co
 	}
 }
 
-/** Common produce-and-yield helper.
+/** Common produce-and-yield helper
  *
  * Submits a message to librdkafka and returns the produce context on
  * success.  The caller is responsible for yielding the request with the
@@ -358,7 +358,7 @@ rlm_kafka_msg_ctx_t *kafka_produce_enqueue(rlm_kafka_thread_t *t, request_t *req
 	return pctx;
 }
 
-/** Per-topic call_env rules, applied against the `topic <name>` subsection.
+/** Per-topic call_env rules, applied against the `topic <name>` subsection
  *
  * Invoked recursively from @ref _kafka_topic_env_parse via `call_env_parse()`
  * so the framework handles pair lookup / tmpl compilation / offset writes
@@ -450,7 +450,7 @@ static const call_env_method_t rlm_kafka_produce_env = {
 	}
 };
 
-/** Resume a yielded module method after its delivery report has arrived.
+/** Resume a yielded module method after its delivery report has arrived
  *
  * Runs on the same worker as the originating produce (per-thread
  * producer), with `mctx->rctx` being the @ref rlm_kafka_msg_ctx_t the
@@ -471,7 +471,7 @@ static unlang_action_t mod_resume(unlang_result_t *p_result, module_ctx_t const 
 	RETURN_UNLANG_RCODE(rcode);
 }
 
-/** Module-method cancellation.
+/** Module-method cancellation
  *
  * Do NOT free the pctx - librdkafka still owns the in-flight message and
  * will fire dr_msg_cb later with our opaque pointer.  Instead detach the
@@ -493,7 +493,7 @@ static void mod_signal(module_ctx_t const *mctx, request_t *request, UNUSED fr_s
 	pctx->request = NULL;
 }
 
-/** Module method entry point for `kafka.produce.<topic>`.
+/** Module method entry point for `kafka.produce.<topic>`
  *
  * The topic is the method's second identifier; `key` and `value` are
  * pulled from the module config via @ref rlm_kafka_produce_env:
@@ -645,7 +645,7 @@ static int kafka_xlat_instantiate(xlat_inst_ctx_t const *xctx)
 	return 0;
 }
 
-/** Xlat thread-instance init: resolve the cached topic name to a handle.
+/** Xlat thread-instance init: resolve the cached topic name to a handle
  *
  * Runs once per worker thread for each xlat node that has a literal
  * topic arg.  The module's `mod_thread_instantiate` runs first and
@@ -672,7 +672,7 @@ static int kafka_xlat_thread_instantiate(xlat_thread_inst_ctx_t const *xctx)
 	return 0;
 }
 
-/** Xlat resume: translate delivery report into a "partition:offset" string.
+/** Xlat resume: translate delivery report into a "partition:offset" string
  *
  * @param[in] xctx_ctx talloc context for the returned value box.
  * @param[in] out      cursor to append the result to.
@@ -698,7 +698,7 @@ static xlat_action_t kafka_xlat_produce_resume(TALLOC_CTX *xctx_ctx, fr_dcursor_
 	return XLAT_ACTION_DONE;
 }
 
-/** Xlat cancellation.
+/** Xlat cancellation
  *
  * Same semantics as @ref kafka_produce_signal: detach the request from
  * the in-flight `pctx` so the eventual dr_msg_cb discards silently
@@ -721,7 +721,7 @@ static xlat_arg_parser_t const kafka_xlat_produce_args[] = {
 	XLAT_ARG_PARSER_TERMINATOR
 };
 
-/** `%kafka.produce(topic, value)` - runtime-named produce.
+/** `%kafka.produce(topic, value)` - runtime-named produce
  *
  * Unlike the @ref mod_produce method form (which resolves topics at
  * config-parse time), the xlat takes the topic name as a runtime
@@ -775,7 +775,7 @@ static xlat_action_t kafka_xlat_produce(UNUSED TALLOC_CTX *xctx_ctx, UNUSED fr_d
 				 ~FR_SIGNAL_CANCEL, pctx);
 }
 
-/** Delivery report callback, runs on the worker thread that owns the producer.
+/** Delivery report callback, runs on the worker thread that owns the producer
  *
  * If the request is still alive, stash the result and mark it runnable so
  * the resume function can translate the result to an rcode.  If cancelled
@@ -813,7 +813,7 @@ static void _kafka_delivery_report_cb(UNUSED rd_kafka_t *rk, rd_kafka_message_t 
 	unlang_interpret_mark_runnable(pctx->request);
 }
 
-/** Create a per-thread rd_kafka_topic_t for every declared topic.
+/** Create a per-thread rd_kafka_topic_t for every declared topic
  *
  * Called at thread_instantiate.  Walks the `topic { <name> { ... } }`
  * subsections directly off the module's CONF_SECTION - the kafka base
@@ -855,7 +855,7 @@ static int kafka_topic_thread_handles(rlm_kafka_thread_t *t)
 	return 0;
 }
 
-/** Tear down a worker's kafka producer state.
+/** Tear down a worker's kafka producer state
  *
  * Orderly shutdown: detach in-flight requests so any late dr_msg_cbs
  * silently free their pctx rather than resuming a dying interpreter,
@@ -929,7 +929,7 @@ static int mod_thread_detach(module_thread_inst_ctx_t const *mctx)
 	return 0;
 }
 
-/** Stand up this worker's kafka producer.
+/** Stand up this worker's kafka producer
  *
  * Creates the per-worker rd_kafka_t (duping the shared fr_kafka_conf_t
  * so librdkafka owns its own copy), builds per-thread rd_kafka_topic_t
@@ -1019,7 +1019,7 @@ error:
 }
 
 
-/** Module config: just the kafka base producer config for now.
+/** Module config: just the kafka base producer config for now
  *
  * Kept as a local array rather than pointing `common.config` directly
  * at `KAFKA_BASE_PRODUCER_CONFIG` so we can drop in rlm_kafka-specific
@@ -1043,11 +1043,12 @@ static conf_parser_t const module_config[] = {
 
 /** Module-instance setup
  *
- * Pre-render the log prefix for librdkafka's log_cb (which fires from
- * internal threads where no mctx is in scope), then register the cb on
- * the shared producer conf.  Every per-thread `rd_kafka_conf_dup()` in
- * `mod_thread_instantiate` inherits this registration, so all producers
- * feed through the same bridge into the server log.
+ * Stash the instance name for later use as a log prefix (librdkafka's
+ * log_cb fires from internal threads, so no mctx is in scope at that
+ * point), then register `_kafka_log_cb` on the shared producer conf.
+ * Every per-thread `rd_kafka_conf_dup()` in `mod_thread_instantiate`
+ * inherits this registration, so all producers feed through the same
+ * bridge into the server log.
  *
  * @param[in] mctx module-instance ctx.
  * @return 0 on success, -1 on error.
@@ -1062,7 +1063,7 @@ static int mod_instantiate(module_inst_ctx_t const *mctx)
 	return 0;
 }
 
-/** Bootstrap-phase setup.
+/** Bootstrap-phase setup
  *
  * Just registers the `%kafka.produce()` xlat.  Topic declarations are
  * looked up directly via `cf_section_find` at call_env parse time

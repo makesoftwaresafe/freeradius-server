@@ -57,7 +57,7 @@ typedef struct {
 	rd_kafka_topic_conf_t	*rdtc;
 } fr_kafka_topic_conf_t;
 
-/** Declared topic record - one per `topic { <name> { ... } }` subsection.
+/** Declared topic record - one per `topic { <name> { ... } }` subsection
  *
  * Built by the library's per-topic parse hook, indexed on the parent
  * `fr_kafka_conf_t.topics` tree.  Callers typically retrieve via
@@ -71,7 +71,7 @@ struct fr_kafka_topic_s {
 	fr_rb_node_t		node;
 };
 
-/** uctx attached to each entry in `KAFKA_BASE_PRODUCER_CONFIG`.
+/** uctx attached to each entry in `KAFKA_BASE_PRODUCER_CONFIG`
  *
  * Public so the config macro's struct literals resolve in caller TUs.
  * You only touch this directly if you're extending the library's
@@ -87,7 +87,7 @@ typedef struct {
 						//!< Kafka uses ', ' or ';' seemingly at random.
 } fr_kafka_conf_ctx_t;
 
-/** Generic librdkafka-property parser used by `KAFKA_BASE_PRODUCER_CONFIG` entries.
+/** Generic librdkafka-property parser used by `KAFKA_BASE_PRODUCER_CONFIG` entries
  *
  * Exposed so the macro's FR_CONF_PAIR_GLOBAL entries can reference it from any TU.
  */
@@ -98,7 +98,7 @@ int kafka_config_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_ITEM *ci, co
  */
 int kafka_config_dflt(CONF_PAIR **out, void *parent, CONF_SECTION *cs, fr_token_t quote, conf_parser_t const *rule);
 
-/** Untyped passthrough parser used by `KAFKA_RAW_CONFIG`.
+/** Untyped passthrough parser used by `KAFKA_RAW_CONFIG`
  *
  * Hands the CONF_PAIR's attribute/value straight to `rd_kafka_conf_set`.
  * No type dispatch - user is responsible for librdkafka-native units.
@@ -111,7 +111,7 @@ int kafka_config_raw_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_ITEM *ci
  */
 int kafka_topic_config_raw_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_ITEM *ci, conf_parser_t const *rule);
 
-/** Per-topic subsection hook used by KAFKA_PRODUCER_CONFIG / KAFKA_CONSUMER_CONFIG.
+/** Per-topic subsection hook used by KAFKA_PRODUCER_CONFIG / KAFKA_CONSUMER_CONFIG
  *
  * Runs the inner rules against each `topic { <name> { ... } }` block
  * then inserts an `fr_kafka_topic_t` into the parent `fr_kafka_conf_t.topics`
@@ -119,14 +119,14 @@ int kafka_topic_config_raw_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_IT
  */
 int kafka_topic_subsection_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_ITEM *ci, conf_parser_t const *rule);
 
-/** Look up a declared topic by name on an `fr_kafka_conf_t`.
+/** Look up a declared topic by name on an `fr_kafka_conf_t`
  *
  * @return the `fr_kafka_topic_t`, or NULL if no topic of that name was
  *         declared (or if no topics have been parsed yet).
  */
 fr_kafka_topic_t	*kafka_topic_find(fr_kafka_conf_t const *kc, char const *name);
 
-/** @name Nested config arrays referenced by `KAFKA_BASE_PRODUCER_CONFIG`.
+/** @name Nested config arrays referenced by `KAFKA_BASE_PRODUCER_CONFIG`
  *
  * Extern so the macro's FR_CONF_SUBSECTION_GLOBAL entries can name them
  * from any TU.  Not part of the stable API - treat as implementation
@@ -145,7 +145,7 @@ extern conf_parser_t const kafka_base_properties_config[];
 extern conf_parser_t const kafka_base_topic_properties_config[];
 /** @} */
 
-/** Config entries common to producer and consumer clients.
+/** Config entries common to producer and consumer clients
  *
  * Broker list, client identity, TLS / SASL, metadata / version /
  * connection tuning, debug / plugin knobs.  Usually composed with a
@@ -190,7 +190,7 @@ extern conf_parser_t const kafka_base_topic_properties_config[];
 	 * the user writes librdkafka-native units (e.g. "500" for ms). */ \
 	{ FR_CONF_SUBSECTION_GLOBAL("properties", 0, kafka_base_properties_config) }
 
-/** Producer-only delta: librdkafka producer tuning + declared topics.
+/** Producer-only delta: librdkafka producer tuning + declared topics
  *
  * Compose with @ref KAFKA_BASE_CONFIG.  Callers must embed
  * `fr_kafka_conf_t` as the first member of their instance struct so

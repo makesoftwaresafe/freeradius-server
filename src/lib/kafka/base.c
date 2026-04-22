@@ -36,7 +36,7 @@
  * @{
  */
 
-/** Common parse path for a single CONF_PAIR's value.
+/** Common parse path for a single CONF_PAIR's value
  *
  * Handles librdkafka's preferred unit conventions (ms-integer for time
  * deltas, byte-integer for sizes, string "true"/"false" for bools) and
@@ -237,7 +237,7 @@ static int kafka_noop_parse(UNUSED TALLOC_CTX *ctx, UNUSED void *out, UNUSED voi
  * @{
  */
 
-/** Destructor on the talloc sentinel that owns the rd_kafka_conf_t handle.
+/** Destructor on the talloc sentinel that owns the rd_kafka_conf_t handle
  *
  * The sentinel is just a talloced `rd_kafka_conf_t *` attached to the
  * caller's parse ctx - when talloc unwinds the instance, this fires and
@@ -249,7 +249,7 @@ static int _kafka_conf_free(rd_kafka_conf_t **pconf)
 	return 0;
 }
 
-/** Fetch the `fr_kafka_conf_t` currently being populated by the parser.
+/** Fetch the `fr_kafka_conf_t` currently being populated by the parser
  *
  * The parser contract is that `base` points at the caller's instance
  * struct and `fr_kafka_conf_t` is its first member, so a reinterpret
@@ -441,7 +441,7 @@ int kafka_config_dflt(CONF_PAIR **out, void *parent, CONF_SECTION *cs, fr_token_
 	return 0;
 }
 
-/** Untyped passthrough: hand a CONF_PAIR's attr/value straight to rd_kafka_conf_set.
+/** Untyped passthrough: hand a CONF_PAIR's attr/value straight to rd_kafka_conf_set
  *
  * Used by the `CF_IDENT_ANY` entry in the base `properties { }` subsection
  * to accept arbitrary librdkafka properties that don't have a typed entry
@@ -485,7 +485,7 @@ static int _kafka_topic_conf_free(fr_kafka_topic_conf_t *ktc)
 	return 0;
 }
 
-/** Allocate a per-topic conf parented under `ctx`.
+/** Allocate a per-topic conf parented under `ctx`
  *
  * Used by the subsection hook to build each declared topic's
  * `fr_kafka_topic_conf_t`.  The destructor releases the librdkafka
@@ -589,7 +589,7 @@ static int kafka_topic_config_dflt(CONF_PAIR **out, void *parent, CONF_SECTION *
 	return 0;
 }
 
-/** Topic-level counterpart to `kafka_config_raw_parse`.
+/** Topic-level counterpart to `kafka_config_raw_parse`
  *
  * Used inside a declared topic's `properties { }` subsection to accept
  * arbitrary `rd_kafka_topic_conf_set` properties.  `base` is the enclosing
@@ -698,7 +698,7 @@ int kafka_topic_subsection_parse(TALLOC_CTX *ctx, void *out, void *base,
  * @{
  */
 
-/** `properties { ... }` escape-hatch contents.
+/** `properties { ... }` escape-hatch contents
  *
  * Accepts any `key = value` pair and hands it straight to
  * `rd_kafka_conf_set`.  See `kafka_config_raw_parse`.
@@ -708,7 +708,7 @@ conf_parser_t const kafka_base_properties_config[] = {
 	CONF_PARSER_TERMINATOR
 };
 
-/** Per-topic `properties { ... }` escape-hatch contents.
+/** Per-topic `properties { ... }` escape-hatch contents
  *
  * Same idea as `kafka_base_properties_config`, but dispatches to
  * `rd_kafka_topic_conf_set` against the enclosing topic's conf.
