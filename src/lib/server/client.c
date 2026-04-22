@@ -479,12 +479,40 @@ fr_client_list_t *client_list_parse_section(CONF_SECTION *section, int proto, TL
 	fr_client_t	*c = NULL;
 	fr_client_list_t	*clients = NULL;
 	CONF_SECTION	*server_cs = NULL;
+	char const	*cache_name;
+
+	/*
+	 *	Key the cached list by protocol.  The section walk below
+	 *	filters out client definitions whose proto doesn't match
+	 *	the caller's, so caching the filtered list under a single
+	 *	key would let whichever listener instantiated first poison
+	 *	the cache for the other.  In particular the UDP listener
+	 *	would reuse a TCP-filtered list (with UDP-default clients
+	 *	dropped) and never see its own clients.
+	 */
+	switch (proto) {
+	case IPPROTO_UDP:
+		cache_name = "udp";
+		break;
+
+	case IPPROTO_TCP:
+		cache_name = "tcp";
+		break;
+
+	default:
+		/*
+		 *	proto == 0 is the unfiltered / global path
+		 *	(main_config.c passes 0 for root clients).
+		 */
+		cache_name = NULL;
+		break;
+	}
 
 	/*
 	 *	Be forgiving.  If there's already a clients, return
 	 *	it.  Otherwise create a new one.
 	 */
-	clients = cf_data_value(cf_data_find(section, fr_client_list_t, NULL));
+	clients = cf_data_value(cf_data_find(section, fr_client_list_t, cache_name));
 	if (clients) return clients;
 
 	/*
@@ -585,9 +613,11 @@ fr_client_list_t *client_list_parse_section(CONF_SECTION *section, int proto, TL
 	}
 
 	/*
-	 *	Associate the clients structure with the section.
+	 *	Associate the clients structure with the section,
+	 *	keyed by protocol so a per-proto listener's filtered
+	 *	list doesn't shadow another proto's.
 	 */
-	if (!cf_data_add(section, clients, NULL, false)) {
+	if (!cf_data_add(section, clients, cache_name, false)) {
 		cf_log_err(section, "Failed to associate clients with section %s", cf_section_name1(section));
 		talloc_free(clients);
 		return NULL;
