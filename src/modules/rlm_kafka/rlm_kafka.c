@@ -40,6 +40,7 @@
  *
  * @copyright 2022,2026 Arran Cudbard-Bell (a.cudbardb@freeradius.org)
  */
+#include "lib/util/debug.h"
 #include "lib/util/types.h"
 #include "lib/util/value.h"
 RCSID("$Id$")
@@ -230,7 +231,7 @@ static void _kafka_fd_readable(UNUSED fr_event_list_t *el, int fd, UNUSED int fl
  */
 static void _kafka_fd_error(UNUSED fr_event_list_t *el, int fd, UNUSED int flags, int fd_errno, UNUSED void *uctx)
 {
-	FATAL("rlm_kafka: self-pipe error (fd=%d): %s", fd, fr_syserror(fd_errno));
+	FATAL("kafka - self-pipe error (fd=%d): %s", fd, fr_syserror(fd_errno));
 }
 
 /** Translate a librdkafka delivery-report error into a module rcode.
@@ -307,7 +308,7 @@ rlm_kafka_msg_ctx_t *kafka_produce_enqueue(rlm_kafka_thread_t *t, request_t *req
 
 		talloc_free(pctx);
 
-		REDEBUG("rd_kafka_produce failed: %s", rd_kafka_err2str(err));
+		REDEBUG("Failed enqueuing message - %s", rd_kafka_err2str(err));
 		return NULL;
 	}
 	fr_dlist_insert_tail(&t->inflight, pctx);
@@ -525,12 +526,6 @@ static unlang_action_t CC_HINT(nonnull) mod_produce(UNUSED unlang_result_t *p_re
 				   ~FR_SIGNAL_CANCEL, pctx);
 }
 
-static xlat_arg_parser_t const kafka_xlat_produce_args[] = {
-	{ .required = true, .concat = true, .type = FR_TYPE_STRING },	/* topic */
-	{ .required = true, .concat = true, .type = FR_TYPE_OCTETS },	/* value */
-	XLAT_ARG_PARSER_TERMINATOR
-};
-
 /** Xlat instance data - a cached topic name if the first arg is a literal. */
 typedef struct {
 	char const	*topic_name;
@@ -629,7 +624,8 @@ static int kafka_xlat_thread_instantiate(xlat_thread_inst_ctx_t const *xctx)
 	if (!inst || !inst->topic_name) return 0;
 
 	t = talloc_get_type_abort(xctx->mctx->thread, rlm_kafka_thread_t);
-	if (!fr_cond_assert(t_inst->topic = kafka_thread_topic(t, inst->topic_name))) {
+	if (!fr_cond_assert_msg((t_inst->topic = kafka_thread_topic(t, inst->topic_name)),
+				"pre-resolved topic '%s' not found in thread handle tree", inst->topic_name)) {
 		return -1;
 	}
 
@@ -679,6 +675,12 @@ static void kafka_xlat_produce_signal(xlat_ctx_t const *xctx, UNUSED request_t *
 	pctx->request = NULL;
 }
 
+static xlat_arg_parser_t const kafka_xlat_produce_args[] = {
+	{ .required = true, .concat = true, .type = FR_TYPE_STRING },	/* topic */
+	{ .required = true, .concat = true, .type = FR_TYPE_OCTETS },	/* value */
+	XLAT_ARG_PARSER_TERMINATOR
+};
+
 /** `%kafka.produce(topic, value)` - runtime-named produce.
  *
  * Unlike the @ref mod_produce method form (which resolves topics at
@@ -712,11 +714,6 @@ static xlat_action_t kafka_xlat_produce(UNUSED TALLOC_CTX *xctx_ctx, UNUSED fr_d
 	fr_value_box_t				*value_vb = fr_value_box_list_next(in, topic_vb);
 	rd_kafka_topic_t			*topic;
 	rlm_kafka_msg_ctx_t			*pctx;
-
-	if (!topic_vb || !value_vb) {
-		REDEBUG("kafka.produce xlat requires (topic, value)");
-		return XLAT_ACTION_FAIL;
-	}
 
 	/*
 	 *	Fast path: a literal topic argument was pre-resolved to
@@ -780,11 +777,7 @@ static void _kafka_delivery_report_cb(UNUSED rd_kafka_t *rk, rd_kafka_message_t 
  */
 static int kafka_topic_thread_handles(rlm_kafka_thread_t *t)
 {
-	t->topics = fr_rb_inline_talloc_alloc(t, rlm_kafka_topic_t, node, topic_name_cmp, NULL);
-	if (!t->topics) {
-		ERROR("rlm_kafka: failed to allocate topic handle tree");
-		return -1;
-	}
+	MEM(t->topics = fr_rb_inline_talloc_alloc(t, rlm_kafka_topic_t, node, topic_name_cmp, NULL));
 
 	if (!t->inst->kconf.topics) return 0;
 
@@ -792,23 +785,22 @@ static int kafka_topic_thread_handles(rlm_kafka_thread_t *t)
 		rlm_kafka_topic_t	*topic_t;
 		rd_kafka_topic_conf_t	*ktc;
 
-		ktc = rd_kafka_topic_conf_dup(topic->conf->rdtc);
+		MEM(ktc = rd_kafka_topic_conf_dup(topic->conf->rdtc));
 		MEM(topic_t = talloc_zero(t->topics, rlm_kafka_topic_t));
 		MEM(topic_t->name = talloc_strdup(topic_t, topic->name));
 		topic_t->kt = rd_kafka_topic_new(t->rk, topic_t->name, ktc);
 		if (!topic_t->kt) {
 			/* librdkafka consumes tc only on success */
 			rd_kafka_topic_conf_destroy(ktc);
-			ERROR("rlm_kafka: rd_kafka_topic_new('%s') failed: %s",
+			ERROR("Failed creating topic - %s",
 			      topic_t->name, rd_kafka_err2str(rd_kafka_last_error()));
 			talloc_free(topic_t);
 			return -1;
 		}
 		talloc_set_destructor(topic_t, _topic_free);
 
-		if (!fr_rb_insert(t->topics, topic_t)) {
+		if (!fr_cond_assert_msg(fr_rb_insert(t->topics, topic_t), "duplicate topic handle")) {
 			talloc_free(topic_t);
-			ERROR("rlm_kafka: duplicate topic handle '%s'", topic_t->name);
 			return -1;
 		}
 	}
@@ -860,7 +852,7 @@ static int mod_thread_detach(module_thread_inst_ctx_t const *mctx)
 
 		ferr = rd_kafka_flush(t->rk, fr_time_delta_to_msec(t->inst->flush_timeout));
 		if (ferr != RD_KAFKA_RESP_ERR_NO_ERROR) {
-			WARN("rlm_kafka: flush timed out - %d messages remain in queue",
+			WARN("kafka - Flush timed out - %d messages remain in queue",
 			     rd_kafka_outq_len(t->rk));
 		}
 
@@ -929,13 +921,13 @@ static int mod_thread_instantiate(module_thread_inst_ctx_t const *mctx)
 	t->rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
 	if (!t->rk) {
 		rd_kafka_conf_destroy(conf);			/* only consumed on success */
-		ERROR("rlm_kafka: rd_kafka_new failed: %s", errstr);
+		ERROR("rd_kafka_new failed: %s", errstr);
 		return -1;
 	}
 
 	t->main_q = rd_kafka_queue_get_main(t->rk);
 	if (!t->main_q) {
-		ERROR("rlm_kafka: rd_kafka_queue_get_main returned NULL");
+		ERROR("rd_kafka_queue_get_main returned NULL");
 		goto error;
 	}
 
@@ -948,7 +940,7 @@ static int mod_thread_instantiate(module_thread_inst_ctx_t const *mctx)
 	 *	poll the queue.
 	 */
 	if (pipe(t->wake_pipe) < 0) {
-		ERROR("rlm_kafka: pipe() failed: %s", fr_syserror(errno));
+		ERROR("pipe() failed: %s", fr_syserror(errno));
 		goto error;
 	}
 	(void) fr_nonblock(t->wake_pipe[0]);
@@ -958,7 +950,7 @@ static int mod_thread_instantiate(module_thread_inst_ctx_t const *mctx)
 
 	if (fr_event_fd_insert(t, &t->ev_fd, t->el, t->wake_pipe[0],
 			       _kafka_fd_readable, NULL, _kafka_fd_error, t) < 0) {
-		PERROR("rlm_kafka: fr_event_fd_insert failed");
+		PERROR("fr_event_fd_insert failed");
 		rd_kafka_queue_io_event_enable(t->main_q, -1, NULL, 0);
 		goto error;
 	}
@@ -1017,7 +1009,7 @@ static int mod_bootstrap(module_inst_ctx_t const *mctx)
 {
 	xlat_t	*xlat;
 
-	xlat = module_rlm_xlat_register(mctx->mi->data, mctx, "produce", kafka_xlat_produce, FR_TYPE_BOOL);
+	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, "produce", kafka_xlat_produce, FR_TYPE_BOOL);
 	if (!xlat) return -1;
 	xlat_func_args_set(xlat, kafka_xlat_produce_args);
 	xlat_func_instantiate_set(xlat, kafka_xlat_instantiate,
