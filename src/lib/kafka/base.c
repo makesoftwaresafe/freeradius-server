@@ -29,6 +29,71 @@
 /* fr_kafka_conf_ctx_t definition lives in base.h so the KAFKA_BASE_CONFIG
  * macro can construct struct literals of it from caller TUs. */
 
+/** @name Library init
+ *
+ * librdkafka defers SSL / SASL / internal-refcount setup until the first
+ * `rd_kafka_new()`.  Doing that lazily in a worker thread races the
+ * server's own OpenSSL init and leaves the ordering non-deterministic,
+ * so we kick it once at module load via `fr_kafka_init()`.  The counter
+ * mirrors `fr_openssl_init()` in src/lib/tls/base.c.
+ *
+ * @{
+ */
+static uint32_t kafka_instance_count = 0;
+
+static void _kafka_null_log_cb(UNUSED rd_kafka_t const *rk, UNUSED int level,
+			       UNUSED char const *fac, UNUSED char const *buf)
+{
+	/* swallow the "no bootstrap brokers" warning from the dummy producer */
+}
+
+/** Drive librdkafka's lazy global init deterministically
+ *
+ * First call creates and immediately destroys a throwaway producer, which
+ * walks all of librdkafka's one-shot init paths (SSL lock callbacks on
+ * OpenSSL 1.0.2, SASL global init if compiled in, etc.).  Subsequent
+ * calls just bump the refcount so multiple kafka-using modules can share
+ * the init.
+ */
+int fr_kafka_init(void)
+{
+	rd_kafka_conf_t *conf;
+	rd_kafka_t	*rk;
+	char		errstr[512];
+
+	if (kafka_instance_count > 0) {
+		kafka_instance_count++;
+		return 0;
+	}
+
+	conf = rd_kafka_conf_new();
+	rd_kafka_conf_set_log_cb(conf, _kafka_null_log_cb);
+
+	rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
+	if (!rk) {
+		fr_strerror_printf("Failed priming librdkafka globals: %s", errstr);
+		return -1;
+	}
+	rd_kafka_destroy(rk);
+
+	kafka_instance_count++;
+	return 0;
+}
+
+/** Drop one ref to librdkafka's global init
+ *
+ * librdkafka refcounts its own globals internally; our counter just
+ * pairs fr_kafka_init() calls so re-entrant module load/unload in test
+ * harnesses does the right thing.
+ */
+void fr_kafka_free(void)
+{
+	if (kafka_instance_count == 0) return;
+	kafka_instance_count--;
+}
+
+/** @} */
+
 /** @name Shared helpers
  *
  * Used by both the base-level and topic-level parse/dflt paths below.

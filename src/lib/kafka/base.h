@@ -126,6 +126,28 @@ int kafka_topic_subsection_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_IT
  */
 fr_kafka_topic_t	*kafka_topic_find(fr_kafka_conf_t const *kc, char const *name);
 
+/** Initialise librdkafka's global state (SSL / SASL / internal ref-count)
+ *
+ * Ref-counted: every call must be paired with `fr_kafka_free()`.  The
+ * first call lazily kicks librdkafka's one-time init paths by creating
+ * and destroying a throwaway producer; subsequent calls just bump the
+ * refcount.  Call this from a kafka-using module's `.onload` so the
+ * library's internal globals are set up deterministically at startup
+ * rather than racing the first real `rd_kafka_new()` in a worker
+ * thread.
+ *
+ * @return 0 on success, -1 on failure.
+ */
+int		fr_kafka_init(void);
+
+/** Release one reference to librdkafka's global state
+ *
+ * Call from a module's `.unload` to pair `fr_kafka_init()`.  The last
+ * release is a no-op; librdkafka internally ref-counts its own globals
+ * and tears down when the last `rd_kafka_t` goes.
+ */
+void		fr_kafka_free(void);
+
 /** @name Nested config arrays referenced by `KAFKA_BASE_PRODUCER_CONFIG`
  *
  * Extern so the macro's FR_CONF_SUBSECTION_GLOBAL entries can name them
