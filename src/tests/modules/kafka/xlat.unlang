@@ -44,7 +44,7 @@ if (!%kafka.produce('freeradius-test-xlat-alt', "xlat-key", "alternate topic")) 
 #
 #  Empty value - librdkafka accepts zero-length payloads.
 #
-if (!%kafka.produce('freeradius-test-xlat', '', "")) {
+if (!%kafka.produce('freeradius-test-xlat', null, "")) {
 	test_fail
 }
 
