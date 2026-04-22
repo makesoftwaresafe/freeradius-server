@@ -1131,6 +1131,24 @@ static int mod_instantiate(module_inst_ctx_t const *mctx)
 	return 0;
 }
 
+/** One-time library load hook
+ *
+ * Prime librdkafka's lazy global init (SSL lock callbacks on legacy
+ * OpenSSL, SASL globals if compiled in) so the first real
+ * `rd_kafka_new()` in a worker thread doesn't race the server's own
+ * OpenSSL setup.  Ref-counted against any other kafka-using module.
+ */
+static int mod_load(void)
+{
+	return fr_kafka_init();
+}
+
+/** Paired with mod_load */
+static void mod_unload(void)
+{
+	fr_kafka_free();
+}
+
 /** Bootstrap-phase setup
  *
  * Just registers the `%kafka.produce()` xlat.  Topic declarations are
@@ -1163,6 +1181,8 @@ module_rlm_t rlm_kafka = {
 		.inst_size		= sizeof(rlm_kafka_t),
 		.thread_inst_size	= sizeof(rlm_kafka_thread_t),
 		.config			= module_config,
+		.onload			= mod_load,
+		.unload			= mod_unload,
 		.bootstrap		= mod_bootstrap,
 		.instantiate		= mod_instantiate,
 		.thread_instantiate	= mod_thread_instantiate,
