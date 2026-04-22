@@ -19,14 +19,14 @@
 redundant {
 	timeout 300ms {
 		parallel {
-			group { %kafka_unreachable.produce('freeradius-test-race', '', "race 1") }
-			group { %kafka_unreachable.produce('freeradius-test-race', '', "race 2") }
-			group { %kafka_unreachable.produce('freeradius-test-race', '', "race 3") }
-			group { %kafka_unreachable.produce('freeradius-test-race', '', "race 4") }
-			group { %kafka_unreachable.produce('freeradius-test-race', '', "race 5") }
-			group { %kafka_unreachable.produce('freeradius-test-race', '', "race 6") }
-			group { %kafka_unreachable.produce('freeradius-test-race', '', "race 7") }
-			group { %kafka_unreachable.produce('freeradius-test-race', '', "race 8") }
+			group { %kafka_unreachable.produce('freeradius-test-race', null, "race 1") }
+			group { %kafka_unreachable.produce('freeradius-test-race', null, "race 2") }
+			group { %kafka_unreachable.produce('freeradius-test-race', null, "race 3") }
+			group { %kafka_unreachable.produce('freeradius-test-race', null, "race 4") }
+			group { %kafka_unreachable.produce('freeradius-test-race', null, "race 5") }
+			group { %kafka_unreachable.produce('freeradius-test-race', null, "race 6") }
+			group { %kafka_unreachable.produce('freeradius-test-race', null, "race 7") }
+			group { %kafka_unreachable.produce('freeradius-test-race', null, "race 8") }
 		}
 	}
 	group {

@@ -345,8 +345,19 @@ static int xlat_validate_function_arg(xlat_arg_parser_t const *arg_p, xlat_exp_t
 	 *	body receives an FR_TYPE_NULL box in this arg slot and can
 	 *	decide what to do with it.  Casting would collapse it into a
 	 *	zero-length value of the declared type and hide the intent.
+	 *
+	 *	Callers that marked the arg `required = true` are asking for
+	 *	a concrete value, not a placeholder - reject the literal up
+	 *	front so the config error surfaces at startup rather than on
+	 *	the first request that hits this node.
 	 */
-	if (fr_type_is_null(node->data.type)) return 0;
+	if (fr_type_is_null(node->data.type)) {
+		if (arg_p->required) {
+			fr_strerror_printf("Invalid argument %d - `null` is not allowed for a required argument", argc);
+			return -1;
+		}
+		return 0;
+	}
 
 	/*
 	 *	Cast (or parse) the input data to the expected argument data type.

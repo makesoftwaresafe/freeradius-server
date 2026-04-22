@@ -8,7 +8,7 @@
 #
 #  Empty string payload.
 #
-if (!%kafka.produce('freeradius-test-invalid', '', "")) {
+if (!%kafka.produce('freeradius-test-invalid', null, "")) {
 	test_fail
 }
 
@@ -22,7 +22,7 @@ if (!%kafka.produce('freeradius-test-invalid', '', "")) {
 #  sixteen 1024-byte binary classes.
 #
 control.Tmp-Octets-4 := (octets)%str.rand("1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b")
-if (!%kafka.produce('freeradius-test-invalid', '', control.Tmp-Octets-4)) {
+if (!%kafka.produce('freeradius-test-invalid', null, control.Tmp-Octets-4)) {
 	test_fail
 }
 
@@ -31,7 +31,7 @@ if (!%kafka.produce('freeradius-test-invalid', '', control.Tmp-Octets-4)) {
 #  string, all valid bytes.
 #
 control.Tmp-String-1 := "line1\nline2\ttabbed\r\n\"quoted\""
-if (!%kafka.produce('freeradius-test-invalid', '', control.Tmp-String-1)) {
+if (!%kafka.produce('freeradius-test-invalid', null, control.Tmp-String-1)) {
 	test_fail
 }
 
@@ -39,7 +39,7 @@ if (!%kafka.produce('freeradius-test-invalid', '', control.Tmp-String-1)) {
 #  UTF-8 / high-bit characters.
 #
 control.Tmp-String-2 := "héllo — wörld 🚀"
-if (!%kafka.produce('freeradius-test-invalid', '', control.Tmp-String-2)) {
+if (!%kafka.produce('freeradius-test-invalid', null, control.Tmp-String-2)) {
 	test_fail
 }
 

@@ -297,6 +297,13 @@ static xlat_action_t winbind_ping_xlat(TALLOC_CTX *ctx, fr_dcursor_t *out,
 	fr_value_box_t		*out_vb;
 	fr_time_t		then, now;
 
+	/*
+	 *	An explicit `null` is equivalent to no domain - libwbclient
+	 *	treats a NULL domain pointer as "any".  Drop the box rather
+	 *	than read vb_strvalue on a null-typed box.
+	 */
+	if (domain && fr_type_is_null(domain->type)) domain = NULL;
+
 	wbctx = winbind_slab_reserve(t->slab);
 	if (!wbctx) {
 		RERROR("Ping failed - Unable to get winbind context");

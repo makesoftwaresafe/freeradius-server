@@ -743,9 +743,9 @@ static void kafka_xlat_produce_signal(xlat_ctx_t const *xctx, UNUSED request_t *
 }
 
 static xlat_arg_parser_t const kafka_xlat_produce_args[] = {
-	{ .required = true, .concat = true, .type = FR_TYPE_STRING },	/* topic */
-	{ .required = true, .concat = true, .type = FR_TYPE_OCTETS },	/* key (zero-length octets = no key on the wire) */
-	{ .required = true, .concat = true, .type = FR_TYPE_OCTETS },	/* value */
+	{ .required = true,  .concat = true, .type = FR_TYPE_STRING },	/* topic */
+	{ .required = false, .concat = true, .type = FR_TYPE_OCTETS },	/* key (null / empty / absent = no key on the wire) */
+	{ .required = true,  .concat = true, .type = FR_TYPE_OCTETS },	/* value */
 	XLAT_ARG_PARSER_TERMINATOR
 };
 
@@ -763,12 +763,13 @@ static xlat_arg_parser_t const kafka_xlat_produce_args[] = {
  *     }
  * @endcode
  *
- * `key` is optional: pass an empty string (or an unset attribute) to
- * produce without a key - librdkafka then uses the configured
- * partitioner to spread records across partitions.  When a non-empty
- * key is supplied, librdkafka hashes it to pick a partition, so
- * records with the same key end up on the same partition and preserve
- * per-key produce order on the consumer side.
+ * `key` is optional.  Pass `null`, an empty string, `(octets) ""`, or
+ * an attribute that expands to nothing to produce without a key -
+ * librdkafka then uses the configured partitioner to spread records
+ * across partitions.  When a non-empty key is supplied, librdkafka
+ * hashes it to pick a partition, so records with the same key end up
+ * on the same partition and preserve per-key produce order on the
+ * consumer side.
  *
  * Returns a bool: `true` on successful delivery, `false` on failure.
  * The topic must have been declared in the module config (unknown
@@ -805,12 +806,14 @@ static xlat_action_t kafka_xlat_produce(UNUSED TALLOC_CTX *xctx_ctx, UNUSED fr_d
 	}
 
 	/*
-	 *	Zero-length octets (e.g. `''` or an attribute expanding
-	 *	to nothing) map to "no key" on the wire - librdkafka then
-	 *	uses the configured partitioner instead of key-hash
-	 *	partitioning.
+	 *	`null`, a zero-length literal, or an attribute expanding
+	 *	to nothing all map to "no key" on the wire - librdkafka
+	 *	then uses the configured partitioner instead of key-hash
+	 *	partitioning.  The key box itself is always present here -
+	 *	the required value slot after it forces the caller to
+	 *	provide three args or fail at arg validation.
 	 */
-	if (key_vb->vb_length > 0) {
+	if (!fr_type_is_null(key_vb->type) && key_vb->vb_length > 0) {
 		key = key_vb->vb_octets;
 		key_len = key_vb->vb_length;
 	}

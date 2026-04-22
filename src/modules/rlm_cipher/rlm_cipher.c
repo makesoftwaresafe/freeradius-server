@@ -871,15 +871,19 @@ static xlat_action_t cipher_fingerprint_xlat(TALLOC_CTX *ctx, fr_dcursor_t *out,
 	fr_value_box_t			*vb;
 	uint8_t				*digest;
 
-	if (!fr_value_box_list_next(in, fr_value_box_list_head(in))) {
-		REDEBUG("Missing digest argument");
-		return XLAT_ACTION_FAIL;
-	}
+	{
+		fr_value_box_t *digest_vb = fr_value_box_list_next(in, fr_value_box_list_head(in));
 
-	/*
-	 *	Second arg...
-	 */
-	md_name = ((fr_value_box_t *)fr_value_box_list_next(in, fr_value_box_list_head(in)))->vb_strvalue;
+		if (!digest_vb || fr_type_is_null(digest_vb->type)) {
+			REDEBUG("Missing digest argument");
+			return XLAT_ACTION_FAIL;
+		}
+
+		/*
+		 *	Second arg...
+		 */
+		md_name = digest_vb->vb_strvalue;
+	}
 	md = EVP_get_digestbyname(md_name);
 	if (!md) {
 		REDEBUG("Specified digest \"%s\" is not a valid digest type", md_name);

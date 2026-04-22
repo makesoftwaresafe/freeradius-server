@@ -12,7 +12,7 @@
 #  control so the xlat path exercises an attribute reference.
 #
 control.Tmp-Octets-0 := 0x48656c6c6f00576f726c6400ff00ff
-if (!%kafka.produce('freeradius-test-binary', '', control.Tmp-Octets-0)) {
+if (!%kafka.produce('freeradius-test-binary', null, control.Tmp-Octets-0)) {
 	test_fail
 }
 
@@ -27,7 +27,7 @@ if (!ok) {
 #
 #  Empty payload via the xlat form.
 #
-if (!%kafka.produce('freeradius-test-binary', '', "")) {
+if (!%kafka.produce('freeradius-test-binary', null, "")) {
 	test_fail
 }
 

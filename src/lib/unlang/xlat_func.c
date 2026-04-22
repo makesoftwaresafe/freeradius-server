@@ -363,18 +363,9 @@ static inline int xlat_arg_parser_validate(xlat_t *x, xlat_arg_parser_t const *a
 int xlat_func_args_set(xlat_t *x, xlat_arg_parser_t const args[])
 {
 	xlat_arg_parser_t const *arg_p = args;
-	bool			seen_optional = false;
 
 	for (arg_p = args; arg_p->type != FR_TYPE_NULL; arg_p++) {
 		if (xlat_arg_parser_validate(x, arg_p, (arg_p + 1)->type == FR_TYPE_NULL) < 0) return -1;
-
-		if (arg_p->required) {
-			if (!fr_cond_assert_msg(!seen_optional,
-						"required arguments must be at the "
-						"start of the argument list")) return -1;
-		} else {
-			seen_optional = true;
-		}
 	}
 	x->args = args;
 

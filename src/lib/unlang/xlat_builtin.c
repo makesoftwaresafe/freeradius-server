@@ -1292,6 +1292,15 @@ static xlat_action_t xlat_func_log_dst(UNUSED TALLOC_CTX *ctx, UNUSED fr_dcursor
 
 	XLAT_ARGS(args, &dst, &lvl, &file);
 
+	/*
+	 *	An explicit `null` is treated the same as a missing arg.
+	 *	vb_strvalue on an FR_TYPE_NULL box is unset, so reading
+	 *	it below would be UB.
+	 */
+	if (dst  && fr_type_is_null(dst->type))  dst  = NULL;
+	if (lvl  && fr_type_is_null(lvl->type))  lvl  = NULL;
+	if (file && fr_type_is_null(file->type)) file = NULL;
+
 	if (!dst || !*dst->vb_strvalue) {
 		request_log_prepend(request, NULL, L_DBG_LVL_DISABLE);
 		return XLAT_ACTION_DONE;
@@ -2963,6 +2972,15 @@ static xlat_action_t xlat_func_range(TALLOC_CTX *ctx, fr_dcursor_t *out,
 
 	XLAT_ARGS(args, &start_vb, &end_vb, &step_vb);
 
+	/*
+	 *	Explicit `null` for an optional arg is equivalent to the
+	 *	arg being absent.  The vb_group field on an FR_TYPE_NULL
+	 *	box is zeroed, so list_head() would return NULL and the
+	 *	downstream `->vb_uint64` would dereference NULL.
+	 */
+	if (end_vb && fr_type_is_null(end_vb->type)) end_vb = NULL;
+	if (step_vb && fr_type_is_null(step_vb->type)) step_vb = NULL;
+
 	if (step_vb) {
 		start = fr_value_box_list_head(&start_vb->vb_group)->vb_uint64;
 		end = fr_value_box_list_head(&end_vb->vb_group)->vb_uint64;
@@ -3862,6 +3880,13 @@ static xlat_action_t xlat_func_time(TALLOC_CTX *ctx, fr_dcursor_t *out,
 	fr_unix_time_t		value;
 
 	XLAT_ARGS(args, &arg);
+
+	/*
+	 *	An explicit `null` is treated the same as a missing arg -
+	 *	vb_strvalue is unset on an FR_TYPE_NULL box, so reading it
+	 *	would be UB.
+	 */
+	if (arg && fr_type_is_null(arg->type)) arg = NULL;
 
 	if (!arg || (strcmp(arg->vb_strvalue, "now") == 0)) {
 		value = fr_time_to_unix_time(fr_time());
