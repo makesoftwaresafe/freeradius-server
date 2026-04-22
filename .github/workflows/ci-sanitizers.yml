@@ -129,18 +129,11 @@ jobs:
           --health-retries 5
 
       #
-      #  Pulled from docker.redpanda.com rather than the FreeRADIUS internal
-      #  docker cache because redpandadata/redpanda is not mirrored there.
+      #  No redpanda service container: seastar exits EINVAL on these
+      #  runners with the default command, and GitHub Actions services
+      #  don't let us override it.  Kafka module tests skip here; the
+      #  multi-server kafka-produce test covers the produce path instead.
       #
-      redpanda:
-        image: docker.redpanda.com/redpandadata/redpanda:latest
-        ports:
-          - 9092:9092
-        options: >-
-          --health-cmd "rpk cluster health --exit-when-healthy"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
 
     steps:
 
@@ -199,8 +192,6 @@ jobs:
           imap_test_server_ssl_port: 1432
           smtp_test_server: 127.0.0.1
           smtp_test_server_port: 2525
-          kafka_test_server: redpanda
-          kafka_test_server_port: 9092
 
       #
       #  If the CI has failed and the branch is ci-debug then we start a tmate

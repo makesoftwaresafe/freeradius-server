@@ -35,20 +35,24 @@ services:
     # compose service name.  Without this the broker tells clients to
     # reconnect at 127.0.0.1:9092 which only works when client and
     # broker share a network namespace.
+    #
+    #  `--mode dev-container` is Redpanda's blessed single-node dev
+    #  preset: it relaxes IO/memory probing so the broker boots on a
+    #  shared CI runner without needing root, hugepages, or a tuned
+    #  seastar profile.  Everything else is the minimum we need on top.
+    #
     command:
     - redpanda
     - start
+    - --mode
+    - dev-container
     - --kafka-addr
     - PLAINTEXT://0.0.0.0:9092
     - --advertise-kafka-addr
     - PLAINTEXT://kafka:9092
-    - --overprovisioned
     - --smp=1
     - --memory=1G
-    - --reserve-memory=0M
     - --node-id=0
-    - --check=false
-    - --unsafe-bypass-fsync=true
     restart: unless-stopped
     #
     #  Redpanda needs longer than you'd think on a busy CI runner: the

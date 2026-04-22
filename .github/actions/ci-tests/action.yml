@@ -57,9 +57,17 @@ inputs:
     description: SMTP server SMTP port
     default: 2525
 
+  #
+  #  Kafka is opt-in.  Redpanda (our Kafka-compatible test broker) can't
+  #  start with the default command on GitHub Actions `services:` runners
+  #  - the seastar runtime fails EINVAL without extra flags we can't pass
+  #  through the services stanza.  Leaving this empty makes
+  #  test.modules.kafka skip cleanly; the multi-server kafka test covers
+  #  the full produce path via docker-compose.
+  #
   kafka_test_server:
-    description: Kafka/Redpanda broker host
-    default: 127.0.0.1
+    description: Kafka/Redpanda broker host (empty = skip kafka module tests)
+    default: ""
   kafka_test_server_port:
     description: Kafka/Redpanda broker port
     default: 9092
