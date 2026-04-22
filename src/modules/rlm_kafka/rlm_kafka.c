@@ -296,9 +296,11 @@ static void _kafka_fd_readable(UNUSED fr_event_list_t *el, int fd, UNUSED int fl
  * @param[in] fd_errno errno as reported by the event loop.
  * @param[in] uctx     UNUSED.
  */
-static void _kafka_fd_error(UNUSED fr_event_list_t *el, int fd, UNUSED int flags, int fd_errno, UNUSED void *uctx)
+static void _kafka_fd_error(UNUSED fr_event_list_t *el, int fd, UNUSED int flags, int fd_errno, void *uctx)
 {
-	FATAL("kafka - self-pipe error (fd=%d): %s", fd, fr_syserror(fd_errno));
+	rlm_kafka_thread_t	*t = talloc_get_type_abort(uctx, rlm_kafka_thread_t);
+
+	FATAL("%s - self-pipe error (fd=%d): %s", t->inst->log_prefix, fd, fr_syserror(fd_errno));
 }
 
 /** Translate a librdkafka delivery-report error into a module rcode
