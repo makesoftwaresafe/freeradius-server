@@ -40,26 +40,31 @@
  *
  * @copyright 2022,2026 Arran Cudbard-Bell (a.cudbardb@freeradius.org)
  */
-#include "lib/util/debug.h"
-#include "lib/util/types.h"
-#include "lib/util/value.h"
 RCSID("$Id$")
+
 USES_APPLE_DEPRECATED_API
+
+#include <freeradius-devel/util/debug.h>
+#include <freeradius-devel/util/dlist.h>
+#include <freeradius-devel/util/misc.h>
+#include <freeradius-devel/util/rb.h>
+#include <freeradius-devel/util/types.h>
+#include <freeradius-devel/util/value.h>
+
+#include <freeradius-devel/kafka/base.h>
 
 #include <freeradius-devel/server/base.h>
 #include <freeradius-devel/server/module_rlm.h>
+
 #include <freeradius-devel/unlang/call_env.h>
 #include <freeradius-devel/unlang/module.h>
 #include <freeradius-devel/unlang/xlat.h>
 #include <freeradius-devel/unlang/xlat_ctx.h>
 #include <freeradius-devel/unlang/xlat_func.h>
 #include <freeradius-devel/unlang/xlat_priv.h>
-#include <freeradius-devel/util/dlist.h>
-#include <freeradius-devel/util/misc.h>
-#include <freeradius-devel/util/rb.h>
-#include <freeradius-devel/kafka/base.h>
 
 #include <fcntl.h>
+#include <pthread.h>
 #include <unistd.h>
 
 /** Module instance data
