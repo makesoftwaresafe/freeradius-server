@@ -276,7 +276,7 @@ static void kafka_drain_pipe(int fd)
  */
 static void _kafka_fd_readable(UNUSED fr_event_list_t *el, int fd, UNUSED int flags, void *uctx)
 {
-	rlm_kafka_thread_t	*t = uctx;
+	rlm_kafka_thread_t	*t = talloc_get_type_abort(uctx, rlm_kafka_thread_t);
 	kafka_drain_pipe(fd);
 	while (rd_kafka_poll(t->rk, 0) > 0);
 }
