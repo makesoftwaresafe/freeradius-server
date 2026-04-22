@@ -158,9 +158,9 @@ typedef struct {
  *  @return `strcmp` ordering of `a->name` and `b->name`. */
 static int8_t topic_name_cmp(void const *a, void const *b)
 {
-	char const *const	*na = a;
-	char const *const	*nb = b;
-	return CMP(strcmp(*na, *nb), 0);
+	rlm_kafka_topic_t const *ta = a;
+	rlm_kafka_topic_t const *tb = b;
+	return CMP(strcmp(ta->name, tb->name), 0);
 }
 
 /** Destructor for per-thread topic handles.  Releases the rd_kafka_topic_t. */
