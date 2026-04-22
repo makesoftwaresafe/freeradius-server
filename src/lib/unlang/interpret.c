@@ -116,6 +116,22 @@ void *unlang_thread_instance(unlang_t const *instruction)
 	return unlang_thread_array[instruction->number].thread_inst;
 }
 
+/** Get the thread-instance data for an instruction.
+ *
+ * @param[in] instruction	the instruction to use
+ * @return			a pointer to thread-local data
+ */
+static inline unlang_thread_t *unlang_thread_data(unlang_t const *instruction)
+{
+	if (!instruction->number) return NULL;
+
+	fr_assert(unlang_thread_array);
+	fr_assert(instruction->number <= unlang_number);
+
+	return &unlang_thread_array[instruction->number];
+}
+
+
 #ifdef WITH_PERF
 void unlang_frame_perf_init(unlang_stack_frame_t *frame)
 {
@@ -298,6 +314,63 @@ void unlang_perf_virtual_server(fr_log_t *log, char const *name)
 	fr_log(log, L_DBG, file, line, "}\n");
 }
 #endif
+
+/** Get the current instruction
+ *
+ */
+unlang_t const *unlang_interpret_instruction(request_t *request)
+{
+	unlang_stack_t		*stack = request->stack;
+	unlang_stack_frame_t	*frame;
+
+	frame = &stack->frame[stack->depth];
+	fr_assert(frame->instruction != NULL);
+
+	return frame->instruction;
+}
+
+static void forced_result_expiry_handler(UNUSED fr_timer_list_t *tl, UNUSED fr_time_t now, void *ctx)
+{
+	unlang_thread_t *thread_data = ctx;
+
+	thread_data->use_forced_result = false;
+}
+
+/** Set (or clear) a forced result
+ *
+ *  If timer list is passed, and a future expiry time, the function
+ *  will set a timer that removes the forced result at that time.
+ */
+int unlang_interpret_force_result(unlang_t const *instruction, unlang_result_t *p_result,
+				  fr_timer_list_t *tl, fr_time_delta_t expire)
+{
+	unlang_thread_t *thread_data;
+
+	thread_data = unlang_thread_data(instruction);
+	if (!thread_data) return -1;
+
+	if (!p_result) {
+		thread_data->use_forced_result = false;
+		if (thread_data->ev) (void) fr_timer_delete(&thread_data->ev);
+		return 0;
+	}
+
+	if (tl && fr_time_delta_ispos(expire)) {
+		if (fr_timer_in(tl, tl, &thread_data->ev, expire,
+				false, forced_result_expiry_handler, thread_data) < 0) {
+			return -1;
+		}
+	} else {
+		/*
+		 *	Delete any previous expiry timers.
+		 */
+		if (thread_data->ev) (void) fr_timer_delete(&thread_data->ev);
+	}
+
+	thread_data->use_forced_result = true;
+	thread_data->forced_result = *p_result;
+	return 0;
+}
 
 /*
  *	End of thread-local variables and functions.
@@ -1005,6 +1078,7 @@ unlang_frame_action_t frame_eval(request_t *request, unlang_stack_frame_t *frame
 		unlang_t const		*instruction = frame->instruction;
 		unlang_action_t		ua;
 		unlang_frame_action_t	fa;
+		unlang_thread_t		*thread_data;
 
 		DUMP_STACK;
 
@@ -1069,13 +1143,23 @@ unlang_frame_action_t frame_eval(request_t *request, unlang_stack_frame_t *frame
 		unlang_frame_perf_resume(frame);
 
 		/*
-		 *	catch plays games with the frame so we skip
-		 *	to the next catch section at a given depth,
-		 *	it's not safe to access frame->instruction
-		 *	after this point, and the cached instruction
-		 *	should be used instead.
+		 *	A module (or even a section) may be administratively down
 		 */
-		ua = frame->process(&frame->scratch_result, request, frame);
+		if (unlikely(((thread_data = unlang_thread_data(instruction)) != NULL) &&
+			     thread_data->use_forced_result)) {
+			frame->scratch_result = thread_data->forced_result;
+			ua = UNLANG_ACTION_CALCULATE_RESULT;
+
+		} else {
+			/*
+			 *	catch plays games with the frame so we skip
+			 *	to the next catch section at a given depth,
+			 *	it's not safe to access frame->instruction
+			 *	after this point, and the cached instruction
+			 *	should be used instead.
+			 */
+			ua = frame->process(&frame->scratch_result, request, frame);
+		}
 
 		fr_assert(MOD_ACTION_VALID(scratch->priority));
 

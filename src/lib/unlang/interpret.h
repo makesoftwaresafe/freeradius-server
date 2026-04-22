@@ -160,6 +160,11 @@ typedef struct {
 		.default_result = UNLANG_RESULT_RCODE(_default_rcode),	\
 	}
 
+/*
+ *	Forward definition of the instruction for type safety.
+ */
+typedef struct unlang_s unlang_t;
+
 int			unlang_interpret_push_section(unlang_result_t *p_result, request_t *request,
 						      CONF_SECTION *cs, unlang_frame_conf_t const *conf)
 						      CC_HINT(warn_unused_result);
@@ -218,6 +223,11 @@ unlang_mod_action_t	unlang_interpret_priority(request_t *request);
 unlang_result_t		*unlang_interpret_result(request_t *request);
 
 TALLOC_CTX		*unlang_interpret_frame_talloc_ctx(request_t *request);
+
+unlang_t const		*unlang_interpret_instruction(request_t *request);
+
+int			unlang_interpret_force_result(unlang_t const *instruction, unlang_result_t *p_result,
+						      fr_timer_list_t *tl, fr_time_delta_t expire) CC_HINT(nonnull(1));
 
 int			unlang_interpret_init_global(TALLOC_CTX *ctx);
 #ifdef __cplusplus

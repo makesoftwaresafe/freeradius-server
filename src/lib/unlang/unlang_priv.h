@@ -354,6 +354,11 @@ typedef struct {
 typedef struct {
 	unlang_t const		*instruction;			//!< instruction which we're executing
 	void			*thread_inst;			//!< thread-specific instance data
+
+	bool			use_forced_result;		//!< Do we force a result for this module?
+	unlang_result_t		forced_result;			//!< the result to force
+	fr_timer_t		*ev;				//!< run on expiry
+
 #ifdef WITH_PERF
 	uint64_t		use_count;			//!< how many packets it has processed
 	uint64_t		running;			//!< currently running this instruction
