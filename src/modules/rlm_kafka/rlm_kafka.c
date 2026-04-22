@@ -596,7 +596,7 @@ typedef struct {
  */
 static int kafka_xlat_instantiate(xlat_inst_ctx_t const *xctx)
 {
-	rlm_kafka_xlat_inst_t	*inst = xctx->inst;
+	rlm_kafka_xlat_inst_t	*inst = talloc_get_type_abort(xctx->inst, rlm_kafka_xlat_inst_t);
 	rlm_kafka_t const	*mod_inst = talloc_get_type_abort_const(xctx->mctx->mi->data, rlm_kafka_t);
 	xlat_exp_t		*topic_arg;
 	xlat_exp_t const	*topic_node;
@@ -654,8 +654,8 @@ static int kafka_xlat_instantiate(xlat_inst_ctx_t const *xctx)
  */
 static int kafka_xlat_thread_instantiate(xlat_thread_inst_ctx_t const *xctx)
 {
-	rlm_kafka_xlat_inst_t const	*inst = xctx->inst;
-	rlm_kafka_xlat_thread_inst_t	*t_inst = xctx->thread;
+	rlm_kafka_xlat_inst_t const	*inst = talloc_get_type_abort_const(xctx->inst, rlm_kafka_xlat_inst_t);
+	rlm_kafka_xlat_thread_inst_t	*t_inst = talloc_get_type_abort(xctx->thread, rlm_kafka_xlat_thread_inst_t);
 	rlm_kafka_thread_t		*t;
 
 	/*
@@ -789,9 +789,15 @@ static xlat_action_t kafka_xlat_produce(UNUSED TALLOC_CTX *xctx_ctx, UNUSED fr_d
  */
 static void _kafka_delivery_report_cb(UNUSED rd_kafka_t *rk, rd_kafka_message_t const *msg, UNUSED void *opaque)
 {
-	rlm_kafka_msg_ctx_t	*pctx = msg->_private;
+	rlm_kafka_msg_ctx_t	*pctx;
 
-	if (!pctx) return;
+	/*
+	 *	A NULL opaque is the documented signal for
+	 *	fire-and-forget produces - nothing to resume or free,
+	 *	just return before we try to unbox the pointer.
+	 */
+	if (!msg->_private) return;
+	pctx = talloc_get_type_abort(msg->_private, rlm_kafka_msg_ctx_t);
 
 	fr_dlist_remove(&pctx->t->inflight, pctx);
 
