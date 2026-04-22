@@ -320,11 +320,20 @@ rlm_kafka_msg_ctx_t *kafka_produce_enqueue(rlm_kafka_thread_t *t, request_t *req
  * Invoked recursively from @ref _kafka_topic_env_parse via `call_env_parse()`
  * so the framework handles pair lookup / tmpl compilation / offset writes
  * for us.
+ *
+ * Both `value` and `key` are typed `FR_TYPE_OCTETS`.  Kafka payloads and
+ * keys are opaque byte strings on the wire, and casting to octets keeps
+ * binary content (embedded NULs, high-bit bytes) intact without any
+ * UTF-8/string-termination assumptions creeping in from intermediate
+ * tmpl expansion.  It also means an integer-typed `key` attribute is
+ * serialised in network byte order, which matches the keying convention
+ * other Kafka clients use so the same numeric key hashes to the same
+ * partition across producers.
  */
 static call_env_parser_t const topic_env[] = {
-	{ FR_CALL_ENV_OFFSET("value", FR_TYPE_STRING, CALL_ENV_FLAG_REQUIRED | CALL_ENV_FLAG_CONCAT,
+	{ FR_CALL_ENV_OFFSET("value", FR_TYPE_OCTETS, CALL_ENV_FLAG_REQUIRED | CALL_ENV_FLAG_CONCAT,
 			     rlm_kafka_env_t, value) },
-	{ FR_CALL_ENV_OFFSET("key", FR_TYPE_STRING, CALL_ENV_FLAG_CONCAT | CALL_ENV_FLAG_NULLABLE,
+	{ FR_CALL_ENV_OFFSET("key", FR_TYPE_OCTETS, CALL_ENV_FLAG_CONCAT | CALL_ENV_FLAG_NULLABLE,
 			     rlm_kafka_env_t, key) },
 	CALL_ENV_TERMINATOR
 };
@@ -503,13 +512,13 @@ static unlang_action_t CC_HINT(nonnull) mod_produce(UNUSED unlang_result_t *p_re
 	}
 
 	if (env->key) {
-		key = (uint8_t const *) env->key->vb_strvalue;
+		key = env->key->vb_octets;
 		key_len = env->key->vb_length;
 	}
 
 	pctx = kafka_produce_enqueue(t, request, topic,
 				     key, key_len,
-				     (uint8_t const *) env->value->vb_strvalue, env->value->vb_length);
+				     env->value->vb_octets, env->value->vb_length);
 	if (!pctx) RETURN_UNLANG_FAIL;
 
 	return unlang_module_yield(request, mod_resume, mod_signal,
@@ -518,7 +527,7 @@ static unlang_action_t CC_HINT(nonnull) mod_produce(UNUSED unlang_result_t *p_re
 
 static xlat_arg_parser_t const kafka_xlat_produce_args[] = {
 	{ .required = true, .concat = true, .type = FR_TYPE_STRING },	/* topic */
-	{ .required = true, .concat = true, .type = FR_TYPE_STRING },	/* value */
+	{ .required = true, .concat = true, .type = FR_TYPE_OCTETS },	/* value */
 	XLAT_ARG_PARSER_TERMINATOR
 };
 
@@ -722,7 +731,7 @@ static xlat_action_t kafka_xlat_produce(UNUSED TALLOC_CTX *xctx_ctx, UNUSED fr_d
 
 	pctx = kafka_produce_enqueue(t, request, topic,
 				     NULL, 0,
-				     (uint8_t const *) value_vb->vb_strvalue, value_vb->vb_length);
+				     value_vb->vb_octets, value_vb->vb_length);
 	if (!pctx) return XLAT_ACTION_FAIL;
 
 	return unlang_xlat_yield(request, kafka_xlat_produce_resume, kafka_xlat_produce_signal,
