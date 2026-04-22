@@ -1,0 +1,26 @@
+#
+#  kafka.produce.<topic> - method form with explicit name2.
+#
+#  The topic is the method's second identifier; `value` comes from the
+#  topic's per-topic `value = ...` setting in module.conf.
+#
+kafka.produce.freeradius-test-method
+if (!ok) {
+	test_fail
+}
+
+#
+#  The `send` and `recv` aliases dispatch to the same code path as
+#  `produce` - same call, just a different name for readability.
+#
+kafka.send.freeradius-test-method
+if (!ok) {
+	test_fail
+}
+
+kafka.recv.freeradius-test-method
+if (!ok) {
+	test_fail
+}
+
+test_pass

@@ -1,0 +1,12 @@
+#
+#  Implicit-topic dispatch: bare `kafka` inside a `recv` section
+#  resolves the topic from the section's name2.  The harness runs this
+#  file inside `recv Access-Request { ... }`, so the topic must be
+#  declared as `Access-Request` in module.conf.
+#
+kafka
+if (!ok) {
+	test_fail
+}
+
+test_pass

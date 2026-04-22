@@ -1,0 +1,30 @@
+#
+#  kafka.produce with a topic that declares both `value` and `key`.
+#  The partition is derived deterministically from the key; the test
+#  just asserts the produce completes successfully.
+#
+kafka.produce.freeradius-test-keyed
+if (!ok) {
+	test_fail
+}
+
+#
+#  Same topic, same key - repeatable produce.  Partitioning should be
+#  stable, so two back-to-back produces with the same key land on the
+#  same partition.
+#
+kafka.produce.freeradius-test-keyed
+if (!ok) {
+	test_fail
+}
+
+#
+#  Topic without a declared `key` - produces still succeed; librdkafka
+#  picks a partition via the configured partitioner.
+#
+kafka.produce.freeradius-test-method
+if (!ok) {
+	test_fail
+}
+
+test_pass

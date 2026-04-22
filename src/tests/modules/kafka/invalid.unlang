@@ -1,0 +1,36 @@
+#
+#  Edge-case inputs for the xlat - produces should still return a bool
+#  cleanly (either success or false + logged error) without crashing.
+#
+
+#
+#  Empty string payload.
+#
+if (!%kafka.produce('freeradius-test-xlat', "")) {
+	test_fail
+}
+
+#
+#  Very long payload (16 KiB).  Well within librdkafka's default
+#  message.max.bytes (1 MiB) but enough to exercise the copy path.
+#
+if (!%kafka.produce('freeradius-test-xlat', %str.rpad("x", 16384, "x"))) {
+	test_fail
+}
+
+#
+#  Embedded newlines, tabs, quotes - just special characters in the
+#  string, all valid bytes.
+#
+if (!%kafka.produce('freeradius-test-xlat', "line1\nline2\ttabbed\r\n\"quoted\"")) {
+	test_fail
+}
+
+#
+#  UTF-8 / high-bit characters.
+#
+if (!%kafka.produce('freeradius-test-xlat', "héllo — wörld 🚀")) {
+	test_fail
+}
+
+test_pass

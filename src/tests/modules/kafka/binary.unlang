@@ -1,0 +1,27 @@
+#
+#  Binary payload with embedded NUL bytes and high-bit chars.  The
+#  attribute in binary.attrs carries the raw bytes; the xlat-form
+#  must preserve them end to end.
+#
+control.Tmp-Octets-0 := 0x48656c6c6f00576f726c6400ff00ff
+if (!%kafka.produce('freeradius-test-xlat', &control.Tmp-Octets-0)) {
+	test_fail
+}
+
+#
+#  Empty payload via the method form - librdkafka accepts zero-length
+#  records.
+#
+kafka.produce.freeradius-test-empty
+if (!ok) {
+	test_fail
+}
+
+#
+#  Empty payload via the xlat form.
+#
+if (!%kafka.produce('freeradius-test-xlat', "")) {
+	test_fail
+}
+
+test_pass
