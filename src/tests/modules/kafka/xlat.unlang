@@ -3,12 +3,19 @@
 #  produce cycles.  Each produce yields waiting for a delivery report;
 #  the resume path translates it to a bool (true = delivered).
 #
+#  Two topics in use: `freeradius-test-xlat` takes seven records (1
+#  expanded, 5 sequential, 1 empty) and `freeradius-test-xlat-alt`
+#  takes one, so we subscribe to both up-front.
+#
+%exec('/bin/sh', '-c', '"$KAFKA_SUBSCRIBE" freeradius-test-xlat $ENV{OUTPUT_DIR}kafka-xlat.json 7')
+%exec('/bin/sh', '-c', '"$KAFKA_SUBSCRIBE" freeradius-test-xlat-alt $ENV{OUTPUT_DIR}kafka-xlat-alt.json 1')
 
 #
 #  Value can contain request-scope xlats so we confirm the value is expanded
 #  before being handed to librdkafka.
 #
-if (!%kafka.produce('freeradius-test-xlat', "user=%{User-Name},packet=%{Packet-Type}")) {
+control.Tmp-String-0 := "user=%{User-Name},packet=%{Packet-Type}"
+if (!%kafka.produce('freeradius-test-xlat', control.Tmp-String-0)) {
 	test_fail
 }
 
@@ -38,5 +45,64 @@ if (!%kafka.produce('freeradius-test-xlat-alt', "alternate topic")) {
 if (!%kafka.produce('freeradius-test-xlat', "")) {
 	test_fail
 }
+
+#
+#  Primary topic: seven records in produce order.
+#
+timeout 10s {
+	map json %exec('/bin/sh', '-c', '"$KAFKA_WAIT_AND_CLEANUP" $ENV{OUTPUT_DIR}kafka-xlat.json 7') {
+		control.Tmp-String-1 := '$[0].value'
+		control.Tmp-String-2 := '$[1].value'
+		control.Tmp-String-3 := '$[2].value'
+		control.Tmp-String-4 := '$[3].value'
+		control.Tmp-String-5 := '$[4].value'
+		control.Tmp-String-6 := '$[5].value'
+		control.Tmp-String-7 := '$[6].value'
+	}
+}
+
+#
+#  Record 0: "user=<name>,packet=<type>" expanded.
+#
+control.Tmp-Octets-0 := %base64.decode(control.Tmp-String-1)
+if ((string)control.Tmp-Octets-0 != control.Tmp-String-0) {
+	test_fail
+}
+
+#
+#  Records 1-5: the unrolled sequential payloads.
+#
+control.Tmp-Octets-1 := %base64.decode(control.Tmp-String-2)
+if ((string)control.Tmp-Octets-1 != "sequential 1") { test_fail }
+
+control.Tmp-Octets-2 := %base64.decode(control.Tmp-String-3)
+if ((string)control.Tmp-Octets-2 != "sequential 2") { test_fail }
+
+control.Tmp-Octets-3 := %base64.decode(control.Tmp-String-4)
+if ((string)control.Tmp-Octets-3 != "sequential 3") { test_fail }
+
+control.Tmp-Octets-4 := %base64.decode(control.Tmp-String-5)
+if ((string)control.Tmp-Octets-4 != "sequential 4") { test_fail }
+
+control.Tmp-Octets-5 := %base64.decode(control.Tmp-String-6)
+if ((string)control.Tmp-Octets-5 != "sequential 5") { test_fail }
+
+#
+#  Record 6: empty payload.
+#
+control.Tmp-Octets-6 := %base64.decode(control.Tmp-String-7)
+if (%length(control.Tmp-Octets-6) != 0) { test_fail }
+
+#
+#  Alternate topic: one record.
+#
+timeout 10s {
+	map json %exec('/bin/sh', '-c', '"$KAFKA_WAIT_AND_CLEANUP" $ENV{OUTPUT_DIR}kafka-xlat-alt.json 1') {
+		control.Tmp-String-8 := '$[0].value'
+	}
+}
+
+control.Tmp-Octets-7 := %base64.decode(control.Tmp-String-8)
+if ((string)control.Tmp-Octets-7 != "alternate topic") { test_fail }
 
 test_pass

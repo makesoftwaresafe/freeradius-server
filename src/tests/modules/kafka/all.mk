@@ -15,3 +15,12 @@
 #  script (unlike ldap / 389ds / mysql).
 #
 kafka_require_test_server := 1
+
+#
+#  Absolute path to the kafka-subscribe helper, exported into the
+#  environment so every .unlang test can invoke it via
+#  %exec('$ENV{KAFKA_SUBSCRIBE}', ...) to capture what the broker
+#  actually saw and diff it against what was produced.
+#
+export KAFKA_SUBSCRIBE         := $(top_srcdir)/scripts/ci/kafka-subscribe.sh
+export KAFKA_WAIT_AND_CLEANUP  := $(top_srcdir)/scripts/ci/kafka-wait-and-cleanup.sh

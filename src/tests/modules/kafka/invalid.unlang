@@ -1,20 +1,28 @@
 #
-#  Edge-case inputs for the xlat - produces should still return a bool
-#  cleanly (either success or false + logged error) without crashing.
+#  Edge-case xlat inputs: empty, very long, embedded control chars,
+#  multibyte UTF-8.  Each produce must succeed and the bytes must
+#  round-trip through the broker unaltered.
 #
+%exec('/bin/sh', '-c', '"$KAFKA_SUBSCRIBE" freeradius-test-invalid $ENV{OUTPUT_DIR}kafka-invalid.json 4')
 
 #
 #  Empty string payload.
 #
-if (!%kafka.produce('freeradius-test-xlat', "")) {
+if (!%kafka.produce('freeradius-test-invalid', "")) {
 	test_fail
 }
 
 #
-#  Very long payload (16 KiB).  Well within librdkafka's default
-#  message.max.bytes (1 MiB) but enough to exercise the copy path.
+#  Very long payload (16 KiB of random binary).  Well within
+#  librdkafka's default message.max.bytes (1 MiB) but enough to
+#  exercise the copy path, and random bytes (including NULs and high
+#  bits) are a far more honest corruption test than filler characters
+#  would be.  `%str.rand` caps a single repetition at 1024 per the
+#  REPETITION_MAX constant, so produce 16 KiB by concatenating
+#  sixteen 1024-byte binary classes.
 #
-if (!%kafka.produce('freeradius-test-xlat', %str.rpad("x", 16384, "x"))) {
+control.Tmp-Octets-4 := (octets)%str.rand("1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b1024b")
+if (!%kafka.produce('freeradius-test-invalid', control.Tmp-Octets-4)) {
 	test_fail
 }
 
@@ -22,14 +30,58 @@ if (!%kafka.produce('freeradius-test-xlat', %str.rpad("x", 16384, "x"))) {
 #  Embedded newlines, tabs, quotes - just special characters in the
 #  string, all valid bytes.
 #
-if (!%kafka.produce('freeradius-test-xlat', "line1\nline2\ttabbed\r\n\"quoted\"")) {
+control.Tmp-String-1 := "line1\nline2\ttabbed\r\n\"quoted\""
+if (!%kafka.produce('freeradius-test-invalid', control.Tmp-String-1)) {
 	test_fail
 }
 
 #
 #  UTF-8 / high-bit characters.
 #
-if (!%kafka.produce('freeradius-test-xlat', "héllo — wörld 🚀")) {
+control.Tmp-String-2 := "héllo — wörld 🚀"
+if (!%kafka.produce('freeradius-test-invalid', control.Tmp-String-2)) {
+	test_fail
+}
+
+timeout 10s {
+	map json %exec('/bin/sh', '-c', '"$KAFKA_WAIT_AND_CLEANUP" $ENV{OUTPUT_DIR}kafka-invalid.json 4') {
+		control.Tmp-String-3 := '$[0].value'
+		control.Tmp-String-4 := '$[1].value'
+		control.Tmp-String-5 := '$[2].value'
+		control.Tmp-String-6 := '$[3].value'
+	}
+}
+
+#
+#  Offset 0: empty.
+#
+control.Tmp-Octets-0 := %base64.decode(control.Tmp-String-3)
+if (%length(control.Tmp-Octets-0) != 0) {
+	test_fail
+}
+
+#
+#  Offset 1: 16 KiB of random binary.  Byte-for-byte against the
+#  payload we generated above - any single-bit corruption surfaces.
+#
+control.Tmp-Octets-1 := %base64.decode(control.Tmp-String-4)
+if (control.Tmp-Octets-1 != control.Tmp-Octets-4) {
+	test_fail
+}
+
+#
+#  Offset 2: embedded control chars.  Full byte-for-byte comparison.
+#
+control.Tmp-Octets-2 := %base64.decode(control.Tmp-String-5)
+if ((string)control.Tmp-Octets-2 != control.Tmp-String-1) {
+	test_fail
+}
+
+#
+#  Offset 3: UTF-8 / multibyte.
+#
+control.Tmp-Octets-3 := %base64.decode(control.Tmp-String-6)
+if ((string)control.Tmp-Octets-3 != control.Tmp-String-2) {
 	test_fail
 }
 
