@@ -569,6 +569,16 @@ bool fr_atomic_ring_push(fr_atomic_ring_t *ring, void *data)
 	atomic_store_explicit(&h->next, n, memory_order_release);
 	atomic_store_explicit(&ring->head, n, memory_order_relaxed);
 
+	/*
+	 *	coverity[leaked_storage]
+	 *
+	 *	Coverity doesn't track atomic stores as reference
+	 *	publication, so it sees `n` going out of scope and
+	 *	flags it as leaked.  It isn't: the two atomic stores
+	 *	above have published `n` into both `h->next` and
+	 *	`ring->head`, and the consumer will free it via
+	 *	atomic_ring_entry_free() once it advances past.
+	 */
 	return fr_atomic_queue_push(n->q, data);
 }
 

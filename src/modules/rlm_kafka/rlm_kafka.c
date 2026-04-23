@@ -791,6 +791,15 @@ static xlat_action_t kafka_xlat_produce(UNUSED TALLOC_CTX *xctx_ctx, UNUSED fr_d
 	size_t				key_len = 0;
 
 	/*
+	 *	The xlat framework enforces the arg contract before calling
+	 *	us: `required = true` for topic + value, and the required
+	 *	value slot after key keeps key's position filled even when
+	 *	the caller passes `null`.  Assert the invariant so Coverity
+	 *	stops flagging the downstream derefs.
+	 */
+	fr_assert(topic_vb && key_vb && value_vb);
+
+	/*
 	 *	Fast path: a literal topic argument was pre-resolved to
 	 *	an rd_kafka_topic_t at xlat_instantiate time.
 	 */
