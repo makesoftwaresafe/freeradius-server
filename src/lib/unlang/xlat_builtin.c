@@ -2982,6 +2982,11 @@ static xlat_action_t xlat_func_range(TALLOC_CTX *ctx, fr_dcursor_t *out,
 	if (step_vb && fr_type_is_null(step_vb->type)) step_vb = NULL;
 
 	if (step_vb) {
+		if (!end_vb) {
+			REDEBUG("Invalid range - 'end' cannot be null when 'step' is provided");
+			return XLAT_ACTION_FAIL;
+		}
+
 		start = fr_value_box_list_head(&start_vb->vb_group)->vb_uint64;
 		end = fr_value_box_list_head(&end_vb->vb_group)->vb_uint64;
 		step = fr_value_box_list_head(&step_vb->vb_group)->vb_uint64;
