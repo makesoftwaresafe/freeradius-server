@@ -30,53 +30,44 @@ x-common-config: &id001
     TEST_SUBNET: {{ test_subnet | default('172.16.0.0/12') }}
 services:
   kafka:
-    # Pinned to a specific 24.3.x release instead of :latest - the
-    # current :latest (v26.1.6) hits a close() EINVAL during seastar
-    # reactor init on the self-hosted CI runners even when the
-    # container runs privileged.  Bump when a newer tag is verified
-    # to start cleanly on the runner.
-    image: docker.redpanda.com/redpandadata/redpanda:v24.3.15
-    # Redpanda's seastar reactor aborts during init under the default
-    # Docker sandbox on self-hosted CI runners (close() EINVAL on an
-    # internal fd).  Run privileged so the broker starts reliably; it's
-    # only exposed on this compose network.
-    privileged: true
-    # Override the default command to advertise the broker under its
-    # compose service name.  Without this the broker tells clients to
-    # reconnect at 127.0.0.1:9092 which only works when client and
-    # broker share a network namespace.
-    #
-    #  `--mode dev-container` is Redpanda's blessed single-node dev
-    #  preset: it relaxes IO/memory probing so the broker boots on a
-    #  shared CI runner without needing root, hugepages, or a tuned
-    #  seastar profile.  Everything else is the minimum we need on top.
-    #
-    command:
-    - redpanda
-    - start
-    - --mode
-    - dev-container
-    - --kafka-addr
-    - PLAINTEXT://0.0.0.0:9092
-    - --advertise-kafka-addr
-    - PLAINTEXT://kafka:9092
-    - --smp=1
-    - --memory=1G
-    - --node-id=0
+    # Apache Kafka (KRaft mode, no ZooKeeper).  Previously we used
+    # redpanda here, but its seastar reactor aborts during init with
+    # close() EINVAL on the self-hosted CI runners under every
+    # sandbox/privilege combination we tried, across multiple image
+    # versions.  The apache/kafka JVM image starts cleanly in the
+    # same environment.
+    image: apache/kafka:3.9.1
+    environment:
+      #  Single-node KRaft combined controller + broker.  `kafka` is
+      #  the compose service name and is what the other containers
+      #  connect to.
+      KAFKA_NODE_ID: "0"
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      #  Single-node, so replicas and the transaction log must all
+      #  fit on one broker.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      #  Auto-create topics on first produce (kcat + rlm_kafka both
+      #  rely on this in the tests).
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     restart: unless-stopped
     #
-    #  Redpanda needs longer than you'd think on a busy CI runner: the
-    #  first-launch data directory scaffolding can take 30-60s before
-    #  rpk admin is reachable, and the cluster-health probe only returns
-    #  OK once the controller topic has settled.  Give it up to ~4 min
-    #  before declaring the container unhealthy.
+    #  JVM startup is faster than seastar's probing but still needs
+    #  a grace period before the controller topic is ready.
     #
     healthcheck:
-      test: ["CMD-SHELL", "rpk cluster health --exit-when-healthy"]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 5s
       timeout: 10s
       retries: 24
-      start_period: 120s
+      start_period: 60s
 
   kafka-producer1:
     image: freeradius-build:latest
