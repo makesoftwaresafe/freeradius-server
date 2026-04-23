@@ -84,7 +84,7 @@ int main(int argc, char *argv[])
 	argv += (optind - 1);
 #endif
 
-	aq = fr_atomic_queue_alloc(autofree, size);
+	aq = fr_atomic_queue_talloc(autofree, size);
 
 #ifndef NDEBUG
 	if (debug_lvl) {

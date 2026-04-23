@@ -340,7 +340,7 @@ static fr_coord_t *fr_coord_create(TALLOC_CTX *ctx, fr_event_list_t *el, fr_coor
 	};
 
 	/* Allocate atomic queue / control for receiving messages from workers */
-	aq = fr_atomic_queue_alloc(coord, FR_CONTROL_MAX_MESSAGES);
+	aq = fr_atomic_queue_talloc(coord, FR_CONTROL_MAX_MESSAGES);
 	if (!aq) {
 		fr_strerror_const("Failed creating worker -> coordinator atomic queue");
 	fail:
@@ -354,7 +354,7 @@ static fr_coord_t *fr_coord_create(TALLOC_CTX *ctx, fr_event_list_t *el, fr_coor
 	}
 
 	/* Allocate atomic queue for workers sending data to coordinators */
-	coord->coord_recv_aq = fr_atomic_queue_alloc(coord, FR_CONTROL_MAX_MESSAGES);
+	coord->coord_recv_aq = fr_atomic_queue_talloc(coord, FR_CONTROL_MAX_MESSAGES);
 	if (!coord->coord_recv_aq) {
 		fr_strerror_const("Failed creating worker -> coordinator data atomic queue");
 		goto fail;
@@ -679,8 +679,8 @@ fr_coord_worker_t *fr_coord_attach(TALLOC_CTX *ctx, fr_event_list_t *el, fr_coor
 		return NULL;
 	}
 
-	aq = fr_atomic_queue_alloc(cw, 1024);
-	cw->worker_recv_aq = fr_atomic_queue_alloc(cw, FR_CONTROL_MAX_MESSAGES);
+	aq = fr_atomic_queue_talloc(cw, 1024);
+	cw->worker_recv_aq = fr_atomic_queue_talloc(cw, FR_CONTROL_MAX_MESSAGES);
 	cw->worker_recv_control = fr_control_create(cw, el, aq, 0);
 	cw->worker_send_rb = fr_ring_buffer_create(cw, FR_CONTROL_MAX_MESSAGES * FR_CONTROL_MAX_SIZE);
 	cw->worker_send_ms = fr_message_set_create(cw, FR_CONTROL_MAX_MESSAGES, sizeof(fr_coord_data_t),

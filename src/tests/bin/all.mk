@@ -2,6 +2,7 @@ TEST	:= test.bin
 
 FILES	:= \
 	atomic_queue_test 	\
+	atomic_ring_test 	\
 	control_test		\
 	message_set_test	\
 	radclient		\

@@ -1399,7 +1399,7 @@ nomem:
 	 */
 	memset(&worker->tracking, 0, sizeof(worker->tracking));
 
-	worker->aq_control = fr_atomic_queue_alloc(worker, 1024);
+	worker->aq_control = fr_atomic_queue_talloc(worker, 1024);
 	if (!worker->aq_control) {
 		fr_strerror_const("Failed creating atomic queue");
 	fail:
