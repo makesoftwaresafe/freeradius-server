@@ -22,9 +22,10 @@ expected_messages: 20
 kafka_topic: fr-multi-server-test
 
 # Test framework timeouts.  The whole test has to fit inside test_timeout;
-# state_1 waits `test_verify_timeout` for the load-gen burst, then state_2
-# waits `test_verify_timeout` for the status-server + consumer summary
-# triggers, hence test_timeout = 2 * test_verify_timeout + slack.
-test_timeout: 30
-test_verify_timeout: 10
-consumer_timeout: 15
+# each state waits `test_verify_timeout` for its triggers.  Values are
+# sized for the self-hosted CI DinD runners, which are substantially
+# slower than local Docker Desktop (JVM broker startup alone eats
+# ~30s through the healthcheck).
+test_timeout: 120
+test_verify_timeout: 60
+consumer_timeout: 90
