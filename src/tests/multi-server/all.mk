@@ -154,6 +154,15 @@ test.multi-server.${1}.${2}: $$(TEST_MULTI_SERVER_RENDERED.${1}.${2})
 	        echo "=== $$$$f ==="; \
 	        tail -200 "$$$$f"; \
 	    done; \
+	    for f in ${4}/listener/*; do \
+	        [ -f "$$$$f" ] || continue; \
+	        echo ""; \
+	        echo "=== $$$$f ==="; \
+	        echo "-- line-type counts --"; \
+	        awk '{print $$$$1}' "$$$$f" | sort | uniq -c; \
+	        echo "-- last 200 lines --"; \
+	        tail -200 "$$$$f"; \
+	    done; \
 	    exit 1; \
 	}
 endef
