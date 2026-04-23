@@ -19,12 +19,24 @@
  * @file rlm_kafka.c
  * @brief Asynchronous Kafka producer module.
  *
- * Each worker thread owns its own librdkafka producer handle, so delivery
- * report callbacks always dispatch on the worker that initiated the produce.
- * The producer's main queue is wired to a self-pipe via
- * `rd_kafka_queue_io_event_enable()`; the pipe's read end sits in the
- * worker event loop and drains callbacks (delivery reports, broker errors)
- * as they arrive.
+ * A single shared `rd_kafka_t` serves every worker in the module
+ * instance.  Delivery reports are fanned out to the originating worker
+ * via librdkafka's own background thread: at `mod_instantiate` we set
+ * `rd_kafka_conf_set_background_event_cb` and forward the producer's
+ * main queue to the background queue, so DRs arrive at our bg cb
+ * (`_kafka_background_event_cb`).  The cb pushes each DR's opaque onto
+ * the originating worker's `fr_atomic_ring_t` mailbox and triggers its
+ * `EVFILT_USER` wake event; the worker's event loop drains the mailbox
+ * on its own stack and marks the request runnable itself - resumption
+ * never crosses threads.
+ *
+ * pctx is `malloc`'d, not talloc'd, so the bg thread can free it
+ * directly without racing worker-thread talloc.  `pctx->request` is
+ * atomic and is NULLed by the cancel signal handler on the worker;
+ * by the time `mod_thread_detach` runs the framework has already
+ * cancelled every yielded request this worker owned, so the bg cb
+ * sees NULL and frees inline without touching the (about-to-be-freed)
+ * thread_inst.
  *
  * The schema for the module config is just @ref kafka_base_producer_config
  * from the kafka base library (librdkafka passthrough plus
@@ -51,6 +63,7 @@ USES_APPLE_DEPRECATED_API
 #include <freeradius-devel/util/types.h>
 #include <freeradius-devel/util/value.h>
 
+#include <freeradius-devel/io/atomic_queue.h>
 #include <freeradius-devel/kafka/base.h>
 
 #include <freeradius-devel/server/base.h>
@@ -65,6 +78,8 @@ USES_APPLE_DEPRECATED_API
 
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdatomic.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 /** Module instance data
@@ -77,20 +92,40 @@ USES_APPLE_DEPRECATED_API
  * by talloc when the module instance is torn down (the library attaches
  * a lifecycle sentinel during config parse).
  */
+/** Coordinates the flush / purge / flush dance across worker thread detaches
+ *
+ * Lives in its own `malloc`'d allocation because the surrounding
+ * `rlm_kafka_t` is `mprotect`'d read-only after `mod_instantiate`, and
+ * `pthread_mutex_lock` writes to the mutex memory (mprotect would
+ * SIGBUS).  The pointer on `rlm_kafka_t` is immutable once set.
+ */
+typedef struct {
+	pthread_mutex_t			mu;		//!< serialises the flush/purge/flush dance so
+							//!< only the first worker through performs it.
+	bool				done;		//!< set once the dance has run; guarded by `mu`.
+} rlm_kafka_detach_sync_t;
+
 typedef struct {
 	fr_kafka_conf_t			kconf;		//!< parsed producer conf - MUST be first
-	fr_time_delta_t			flush_timeout;	//!< How long `thread_detach` waits for in-flight
-							//!< messages to drain before tearing down the producer.
+	fr_time_delta_t			flush_timeout;	//!< How long `mod_detach` waits for in-flight
+							//!< produces to drain before `rd_kafka_destroy`.
 	char const			*log_prefix;	//!< pre-rendered `"rlm_kafka (<instance>)"`, used by
 							//!< librdkafka's log_cb which fires from internal
 							//!< threads with no mctx in scope.  Built once in
 							//!< mod_instantiate so we don't reformat per line.
+
+	rd_kafka_t			*rk;		//!< shared producer, created at mod_instantiate.
+	fr_rb_tree_t			*topics;	//!< rlm_kafka_topic_t keyed by name, read-only
+							//!< after mod_instantiate.
+	rlm_kafka_detach_sync_t		*detach;	//!< flush/purge/flush coordination at shutdown;
+							//!< see `rlm_kafka_detach_sync_t`.
 } rlm_kafka_t;
 
-/** Per-thread topic handle
+/** Topic handle
  *
- * One per declared topic, created at thread_instantiate.  rd_kafka_topic_t
- * is per-producer so each worker thread has its own.
+ * One per declared topic, created at mod_instantiate.  `rd_kafka_topic_t`
+ * is bound to the producer that created it; we have one shared producer
+ * per module instance so the topic handles are inst-scoped.
  */
 typedef struct {
 	char const		*name;
@@ -98,48 +133,42 @@ typedef struct {
 	fr_rb_node_t		node;
 } rlm_kafka_topic_t;
 
-typedef struct rlm_kafka_thread_s rlm_kafka_thread_t;
-
-/** Per produce() invocation context
- *
- * Lives on the heap (not the request) because the delivery report callback
- * must be able to find it via librdkafka's opaque pointer even if the
- * request has been cancelled and freed.  Reused as the rctx for both
- * module-method and xlat invocations so we don't need a separate wrapper.
- */
-typedef struct {
-	fr_dlist_t		entry;		//!< linked into rlm_kafka_thread_t::inflight
-	request_t		*request;	//!< NULL once cancelled; dr_msg_cb checks before resuming
-	rlm_kafka_thread_t	*t;		//!< for inflight list removal from dr_msg_cb
-	rd_kafka_resp_err_t	err;		//!< stashed by dr_msg_cb for resume
-	int32_t			partition;
-	int64_t			offset;
-} rlm_kafka_msg_ctx_t;
-
-struct rlm_kafka_thread_s {
-	rlm_kafka_t const	*inst;
+typedef struct rlm_kafka_thread_s {
 	fr_event_list_t		*el;
 
-	rd_kafka_t		*rk;		//!< producer handle
-	rd_kafka_queue_t	*main_q;	//!< producer main queue (delivery + error events)
+	fr_event_user_t		*wake;		//!< EVFILT_USER handle; bg cb triggers it to wake the
+						//!< worker's event loop on this thread.
 
-	int			wake_pipe[2];	//!< self-pipe, [0]=read, [1]=write
-	fr_event_fd_t		*ev_fd;		//!< event for wake_pipe[0]
-
-	fr_rb_tree_t		*topics;	//!< rlm_kafka_topic_t per declared topic
-
-	fr_dlist_head_t		inflight;	//!< outstanding rlm_kafka_msg_ctx_t
+	fr_atomic_ring_t	*queue;		//!< rlm_kafka_msg_ctx_t pushed by bg cb on librdkafka's
+						//!< thread, popped by our event loop on this worker.
+						//!< Segmented SPSC ring: grows on demand, so the bg cb
+						//!< never has to drop a delivery report.
 
 #ifndef NDEBUG
 	pthread_t		worker_tid;	//!< pthread_self() captured at thread_instantiate.
-						//!< Debug-build sanity check: the delivery-report and
-						//!< error callbacks must run on this thread, never
-						//!< cross-thread - a cross-thread hit would mean
-						//!< librdkafka dispatched through something other than
-						//!< our polled main queue and invalidate the no-lock
-						//!< assumption around the inflight list.
+						//!< Debug-build sanity check: the bg cb must NOT run on
+						//!< this thread, and the mailbox drain must.
 #endif
-};
+} rlm_kafka_thread_t;
+
+/** Per produce() invocation context
+ *
+ * Raw `malloc`'d (not talloc) so the background dispatch thread can
+ * `free()` it directly without racing worker-thread talloc activity.
+ * `request` is atomic because the cancel signal handler (worker) and
+ * bg cb (librdkafka's own thread) access it from different threads.
+ * Reused as the rctx for both module-method and xlat invocations so
+ * we don't need a separate wrapper.
+ */
+typedef struct {
+	_Atomic(request_t *)	request;	//!< NULL once cancelled; bg cb / mailbox drain frees
+						//!< when NULL, resume path frees on success.
+	rlm_kafka_thread_t	*target;	//!< worker's thread_inst; bg cb pushes to its mailbox
+						//!< and writes its wake pipe.
+	rd_kafka_resp_err_t	err;		//!< stashed by bg cb for resume
+	int32_t			partition;
+	int64_t			offset;
+} rlm_kafka_msg_ctx_t;
 
 /** Call env for `kafka.produce.<topic>`
  *
@@ -153,6 +182,28 @@ typedef struct {
 	fr_value_box_t		*value;	//!< message payload
 } rlm_kafka_env_t;
 
+/** Module config: just the kafka base producer config for now
+ *
+ * Kept as a local array rather than pointing `common.config` directly
+ * at `KAFKA_BASE_PRODUCER_CONFIG` so we can drop in rlm_kafka-specific
+ * entries (or additional librdkafka properties) alongside it later
+ * without touching the library.
+ */
+static conf_parser_t const module_config[] = {
+	KAFKA_BASE_CONFIG,
+	KAFKA_PRODUCER_CONFIG,
+
+	/*
+	 *	How long `mod_detach` waits for the shared producer's
+	 *	outstanding produces to drain before `rd_kafka_destroy`.
+	 *	Module-level (not a librdkafka property) so we own the
+	 *	CONF_PARSER entry rather than the kafka base library.
+	 */
+	{ FR_CONF_OFFSET("flush_timeout", rlm_kafka_t, flush_timeout), .dflt = "5s" },
+
+	CONF_PARSER_TERMINATOR
+};
+
 /** @param[in] a  rlm_kafka_topic_t
  *  @param[in] b  same.
  *  @return `strcmp` ordering of `a->name` and `b->name`. */
@@ -163,146 +214,120 @@ static int8_t topic_name_cmp(void const *a, void const *b)
 	return CMP(strcmp(ta->name, tb->name), 0);
 }
 
-/** Destructor for per-thread topic handles.  Releases the rd_kafka_topic_t. */
-static int _topic_free(rlm_kafka_topic_t *h)
-{
-	if (h->kt) rd_kafka_topic_destroy(h->kt);
-	return 0;
-}
-
-/** Look up a per-thread topic handle by name
+/** Look up a shared topic handle on the module instance by name
  *
- * @param[in] t    thread instance.
+ * @param[in] inst module instance.
  * @param[in] name topic name (must have been declared at config time).
  * @return `rd_kafka_topic_t` if found, `NULL` otherwise.
  */
-static rd_kafka_topic_t *kafka_thread_topic(rlm_kafka_thread_t *t, char const *name)
+static inline CC_HINT(always_inline)
+rd_kafka_topic_t *kafka_find_topic(rlm_kafka_t const *inst, char const *name)
 {
 	rlm_kafka_topic_t	key = { .name = name };
 	rlm_kafka_topic_t	*h;
 
-	h = fr_rb_find(t->topics, &key);
+	if (!inst->topics) return NULL;
+
+	h = fr_rb_find(inst->topics, &key);
 	return h ? h->kt : NULL;
-}
-
-/** Broker-level error callback (connection failures etc)
- *
- * Not delivery reports - those come via dr_msg_cb.
- *
- * @param[in] rk     UNUSED.
- * @param[in] err    librdkafka error code.
- * @param[in] reason human-readable description.
- * @param[in] uctx   thread instance pointer we passed to rd_kafka_conf_set_opaque().
- */
-static void _kafka_error_cb(UNUSED rd_kafka_t *rk, int err, char const *reason, UNUSED void *uctx)
-{
-#ifndef NDEBUG
-	rlm_kafka_thread_t	*t = talloc_get_type_abort(uctx, rlm_kafka_thread_t);
-
-	/*
-	 *	librdkafka dispatches error events via our polled main
-	 *	queue, so this must fire on the worker thread that
-	 *	called rd_kafka_poll - otherwise the no-lock assumption
-	 *	around our per-thread state would be unsafe.
-	 */
-	fr_assert(pthread_equal(pthread_self(), t->worker_tid) != 0);
-#endif
-
-	ERROR("%s", rd_kafka_err2name(err), reason ? reason : "<UNKNOWN ERROR>");
 }
 
 /** librdkafka log callback - bridge internal library messages into the server log
  *
  * Called from librdkafka's internal threads (no request context, no mctx in
  * scope), so we pull the pre-rendered log prefix off the producer's opaque
- * pointer (the `rlm_kafka_thread_t` we attached at thread_instantiate).
+ * pointer (the `rlm_kafka_t` we attached at mod_instantiate).
  * Which librdkafka categories are actually emitted is controlled by the
  * top-level `debug` config knob.
  *
  * @param[in] rk    producer handle.  `rd_kafka_opaque(rk)` is the
- *                  `rlm_kafka_thread_t` set during thread_instantiate.
+ *                  `rlm_kafka_t` set during mod_instantiate.
  * @param[in] level syslog-style severity (0 emerg .. 7 debug).
  * @param[in] fac   librdkafka facility / category, e.g. `BROKER`, `MSG`.
  * @param[in] buf   pre-formatted message body.
  */
 static void _kafka_log_cb(rd_kafka_t const *rk, int level, char const *fac, char const *buf)
 {
-	rlm_kafka_thread_t	*t = talloc_get_type_abort(rd_kafka_opaque(rk), rlm_kafka_thread_t);
+	rlm_kafka_t	*inst = talloc_get_type_abort(rd_kafka_opaque(rk), rlm_kafka_t);
 
 	switch (level) {
 	case 0:		/* LOG_EMERG   */
 	case 1:		/* LOG_ALERT   */
 	case 2:		/* LOG_CRIT    */
 	case 3:		/* LOG_ERR     */
-		ERROR("%s - %s: %s", t->inst->log_prefix, fac, buf);
+		ERROR("%s - %s - %s", inst->log_prefix, fac, buf);
 		break;
 
 	case 4:		/* LOG_WARNING */
-		WARN("%s - %s: %s", t->inst->log_prefix, fac, buf);
+		WARN("%s - %s - %s", inst->log_prefix, fac, buf);
 		break;
 
 	case 5:		/* LOG_NOTICE  */
 	case 6:		/* LOG_INFO    */
-		INFO("%s - %s: %s", t->inst->log_prefix, fac, buf);
+		INFO("%s - %s - %s", inst->log_prefix, fac, buf);
 		break;
 
 	default:	/* LOG_DEBUG and anything else */
-		DEBUG("%s - %s: %s", t->inst->log_prefix, fac, buf);
+		DEBUG("%s - %s - %s", inst->log_prefix, fac, buf);
 		break;
 	}
 }
 
-/** Drain every byte currently pending on the self-pipe read end
+/** Handle one pctx dequeued from a worker's mailbox
  *
- * librdkafka suppresses subsequent writes until the queue has been served,
- * so there's rarely more than one byte to drain, but the non-blocking read
- * loop handles any accumulated signals.
+ * Runs on the originating worker.  Cancelled requests (pctx->request
+ * NULLed by the signal handler) are freed here; otherwise the request
+ * is marked runnable and the interpreter runs `mod_resume` /
+ * `kafka_xlat_produce_resume` on this worker to translate the stashed
+ * DR into an rcode and free the pctx.
  */
-static void kafka_drain_pipe(int fd)
+static inline CC_HINT(always_inline)
+void kafka_delivery_notification(rlm_kafka_msg_ctx_t *pctx)
 {
-	uint8_t	buf[256];
-	while (read(fd, buf, sizeof(buf)) > 0);
+	/*
+	 *	Relaxed: `pctx->request` is only ever stored by this
+	 *	worker thread (initial set at produce, NULL at cancel),
+	 *	so program order already guarantees we see our own
+	 *	latest write.  Cross-thread synchronisation with the bg
+	 *	cb's writes to pctx->err / partition / offset has
+	 *	already happened via fr_atomic_ring_pop's acquire.
+	 */
+	request_t	*request = atomic_load_explicit(&pctx->request, memory_order_relaxed);
+
+	if (!request) {
+		free(pctx);
+		return;
+	}
+	unlang_interpret_mark_runnable(request);
 }
 
-/** Pipe became readable because librdkafka wrote a wake byte
+/** Worker wake-up callback - the bg cb triggered our EVFILT_USER event
  *
- * Drain the pipe, then drain the producer's main queue by polling with a zero
- * timeout.  `rd_kafka_poll()` dispatches delivery reports
- * (_kafka_delivery_report_cb) and broker errors (_kafka_error_cb) inline
- * on this thread.
+ * Pops everything sitting in the mailbox and dispatches each pctx on
+ * this worker's stack.
  *
- * @param[in] el    UNUSED.
- * @param[in] fd    self-pipe read end.
- * @param[in] flags UNUSED.
- * @param[in] uctx  `rlm_kafka_thread_t` pointer.
+ * @param[in] el	UNUSED.
+ * @param[in] uctx	`rlm_kafka_thread_t` pointer.
  */
-static void _kafka_fd_readable(UNUSED fr_event_list_t *el, int fd, UNUSED int flags, void *uctx)
+static void _kafka_wake(UNUSED fr_event_list_t *el, void *uctx)
 {
 	rlm_kafka_thread_t	*t = talloc_get_type_abort(uctx, rlm_kafka_thread_t);
-	kafka_drain_pipe(fd);
-	while (rd_kafka_poll(t->rk, 0) > 0);
-}
+	rlm_kafka_msg_ctx_t	*pctx;
 
-/** Self-pipe error
- *
- * The pipe is ours - we create it at thread start, keep both ends
- * non-blocking, and librdkafka only writes one wake byte at a time.
- * There's no realistic way for this callback to fire in a healthy
- * process, and if it does, any recovery path would race with librdkafka's
- * in-flight opaque pointers (pctx entries we can't free without
- * coordinating with the library).  Fail hard instead.
- *
- * @param[in] el       UNUSED.
- * @param[in] fd       pipe read end.
- * @param[in] flags    UNUSED.
- * @param[in] fd_errno errno as reported by the event loop.
- * @param[in] uctx     UNUSED.
- */
-static void _kafka_fd_error(UNUSED fr_event_list_t *el, int fd, UNUSED int flags, int fd_errno, void *uctx)
-{
-	rlm_kafka_thread_t	*t = talloc_get_type_abort(uctx, rlm_kafka_thread_t);
+#ifndef NDEBUG
+	fr_assert(pthread_equal(pthread_self(), t->worker_tid) != 0);
+#endif
 
-	FATAL("%s - self-pipe error (fd=%d): %s", t->inst->log_prefix, fd, fr_syserror(fd_errno));
+	while (fr_atomic_ring_pop(t->queue, (void **)&pctx)) {
+		/* See kafka_delivery_notification() for why relaxed is sufficient here. */
+		request_t	*request = atomic_load_explicit(&pctx->request, memory_order_relaxed);
+
+		if (!request) {
+			free(pctx);
+			return;
+		}
+		unlang_interpret_mark_runnable(request);
+	}
 }
 
 /** Translate a librdkafka delivery-report error into a module rcode
@@ -321,18 +346,18 @@ static rlm_rcode_t kafka_err_to_rcode(request_t *request, rlm_kafka_msg_ctx_t co
 	case RD_KAFKA_RESP_ERR__MSG_TIMED_OUT:
 	case RD_KAFKA_RESP_ERR__TIMED_OUT:
 	case RD_KAFKA_RESP_ERR__TIMED_OUT_QUEUE:
-		REDEBUG("Kafka delivery timed out: %s", rd_kafka_err2str(pctx->err));
+		REDEBUG("Kafka delivery timed out - %s", rd_kafka_err2str(pctx->err));
 		return RLM_MODULE_TIMEOUT;
 
 	case RD_KAFKA_RESP_ERR_MSG_SIZE_TOO_LARGE:
 	case RD_KAFKA_RESP_ERR_UNKNOWN_TOPIC_OR_PART:
 	case RD_KAFKA_RESP_ERR_TOPIC_AUTHORIZATION_FAILED:
 	case RD_KAFKA_RESP_ERR__UNKNOWN_TOPIC:
-		REDEBUG("Kafka rejected message: %s", rd_kafka_err2str(pctx->err));
+		REDEBUG("Kafka rejected message - %s", rd_kafka_err2str(pctx->err));
 		return RLM_MODULE_REJECT;
 
 	default:
-		REDEBUG("Kafka delivery failed: %s (%s)",
+		REDEBUG("Kafka delivery failed - %s (%s)",
 			rd_kafka_err2name(pctx->err), rd_kafka_err2str(pctx->err));
 		return RLM_MODULE_FAIL;
 	}
@@ -340,14 +365,17 @@ static rlm_rcode_t kafka_err_to_rcode(request_t *request, rlm_kafka_msg_ctx_t co
 
 /** Common produce-and-yield helper
  *
- * Submits a message to librdkafka and returns the produce context on
- * success.  The caller is responsible for yielding the request with the
- * returned pctx as rctx.  On synchronous failure the pctx is freed and
- * `NULL` is returned.
+ * Submits a message to the shared producer and returns the produce
+ * context on success.  The caller is responsible for yielding the
+ * request with the returned pctx as rctx.  On synchronous failure the
+ * pctx is freed and `NULL` is returned.
  *
- * @param[in] t         thread instance.
+ * pctx is `malloc`'d (not talloc'd) so the bg cb can `free()` it
+ * directly without racing worker-thread talloc.
+ *
+ * @param[in] t         originating worker's thread_inst.
  * @param[in] request   request to yield on.
- * @param[in] topic     preconfigured per-thread topic handle.
+ * @param[in] topic     preconfigured inst-scoped topic handle.
  * @param[in] key       optional message key, may be `NULL`.
  * @param[in] key_len   length of `key`, 0 if `key` is `NULL`.
  * @param[in] value     message payload.
@@ -362,14 +390,13 @@ rlm_kafka_msg_ctx_t *kafka_produce_enqueue(rlm_kafka_thread_t *t, request_t *req
 {
 	rlm_kafka_msg_ctx_t	*pctx;
 
-	MEM(pctx = talloc(t, rlm_kafka_msg_ctx_t));
-	*pctx = (rlm_kafka_msg_ctx_t) {
-		.t = t,
-		.request = request,
-		.err = RD_KAFKA_RESP_ERR_NO_ERROR,
-		.partition = RD_KAFKA_PARTITION_UA,
-		.offset = -1
-	};
+	MEM(pctx = malloc(sizeof(*pctx)));
+	pctx->target = t;
+	pctx->err = RD_KAFKA_RESP_ERR_NO_ERROR;
+	pctx->partition = RD_KAFKA_PARTITION_UA;
+	pctx->offset = -1;
+	atomic_init(&pctx->request, request);
+
 	if (unlikely(rd_kafka_produce(topic, RD_KAFKA_PARTITION_UA, RD_KAFKA_MSG_F_COPY,
 				      /* librdkafka copies under MSG_F_COPY */
 				      (void *)(uintptr_t) value, value_len,
@@ -377,12 +404,11 @@ rlm_kafka_msg_ctx_t *kafka_produce_enqueue(rlm_kafka_thread_t *t, request_t *req
 				      pctx) != 0)) {
 		rd_kafka_resp_err_t	err = rd_kafka_last_error();
 
-		talloc_free(pctx);
+		free(pctx);
 
 		REDEBUG("Failed enqueuing message - %s", rd_kafka_err2str(err));
 		return NULL;
 	}
-	fr_dlist_insert_tail(&t->inflight, pctx);
 
 	return pctx;
 }
@@ -440,7 +466,7 @@ static int _kafka_topic_env_parse(TALLOC_CTX *ctx, call_env_parsed_head_t *out,
 		return -1;
 	}
 
-	topic = kafka_topic_find(&inst->kconf, topic_name);
+	topic = kafka_topic_conf_find(&inst->kconf, topic_name);
 	if (!topic) {
 		cf_log_err(ci, "Kafka topic '%s' is not declared in the '%s' module config",
 			   topic_name, cec->mi->name);
@@ -493,22 +519,22 @@ static const call_env_method_t rlm_kafka_produce_env = {
  */
 static unlang_action_t mod_resume(unlang_result_t *p_result, module_ctx_t const *mctx, request_t *request)
 {
-	rlm_kafka_msg_ctx_t	*pctx = talloc_get_type_abort(mctx->rctx, rlm_kafka_msg_ctx_t);
+	rlm_kafka_msg_ctx_t	*pctx = mctx->rctx;		/* malloc'd, not talloc */
 	rlm_rcode_t		rcode = kafka_err_to_rcode(request, pctx);
 
-	talloc_free(pctx);
+	free(pctx);
 	RETURN_UNLANG_RCODE(rcode);
 }
 
 /** Module-method cancellation
  *
  * Do NOT free the pctx - librdkafka still owns the in-flight message and
- * will fire dr_msg_cb later with our opaque pointer.  Instead detach the
- * request so dr_msg_cb discards silently on arrival; dr_msg_cb frees the
- * pctx.
+ * will fire a DR later with our opaque pointer.  Atomic-store NULL to
+ * `pctx->request` so the bg cb sees the cancellation when it unpacks
+ * the DR and frees the pctx inline without touching the mailbox.
  *
- * Safe against dr_msg_cb racing because both run on the same worker thread
- * (per-worker producer).
+ * Cross-thread: the store is release, matched by the acquire-load in
+ * `_kafka_background_event_cb`.
  *
  * @param[in] mctx    module ctx with pctx as rctx.
  * @param[in] request associated request.
@@ -516,10 +542,10 @@ static unlang_action_t mod_resume(unlang_result_t *p_result, module_ctx_t const 
  */
 static void mod_signal(module_ctx_t const *mctx, request_t *request, UNUSED fr_signal_t action)
 {
-	rlm_kafka_msg_ctx_t	*pctx = talloc_get_type_abort(mctx->rctx, rlm_kafka_msg_ctx_t);
+	rlm_kafka_msg_ctx_t	*pctx = mctx->rctx;
 
 	RDEBUG2("Cancellation signal received - detaching delivery report");
-	pctx->request = NULL;
+	atomic_store_explicit(&pctx->request, NULL, memory_order_release);
 }
 
 /** Module method entry point for `kafka.produce.<topic>`
@@ -566,6 +592,7 @@ static void mod_signal(module_ctx_t const *mctx, request_t *request, UNUSED fr_s
 static unlang_action_t CC_HINT(nonnull) mod_produce(UNUSED unlang_result_t *p_result,
 						    module_ctx_t const *mctx, request_t *request)
 {
+	rlm_kafka_t		*inst = talloc_get_type_abort_const(mctx->mi->data, rlm_kafka_t);
 	rlm_kafka_thread_t	*t = talloc_get_type_abort(mctx->thread, rlm_kafka_thread_t);
 	rlm_kafka_env_t		*env = talloc_get_type_abort(mctx->env_data, rlm_kafka_env_t);
 	rd_kafka_topic_t	*topic;
@@ -574,12 +601,12 @@ static unlang_action_t CC_HINT(nonnull) mod_produce(UNUSED unlang_result_t *p_re
 	uint8_t const		*key = NULL;
 	size_t			key_len = 0;
 
-	topic = kafka_thread_topic(t, env->topic);
+	topic = kafka_find_topic(inst, env->topic);
 	if (unlikely(!topic)) {
 		/*
 		 *	Can't happen if parsing succeeded, but defensive.
 		 */
-		REDEBUG("Kafka topic '%s' has no handle on this worker", env->topic);
+		REDEBUG("Kafka topic '%s' has no handle on this module instance", env->topic);
 		RETURN_UNLANG_FAIL;
 	}
 
@@ -597,31 +624,23 @@ static unlang_action_t CC_HINT(nonnull) mod_produce(UNUSED unlang_result_t *p_re
 				   ~FR_SIGNAL_CANCEL, pctx);
 }
 
-/** Xlat instance data - a cached topic name if the first arg is a literal. */
+/** Xlat instance data - cached topic handle for literal-topic calls
+ *
+ * Topics are inst-scoped (shared producer), so the lookup can be
+ * resolved once at xlat_instantiate and the `rd_kafka_topic_t *`
+ * cached directly - no per-thread hop needed.
+ */
 typedef struct {
-	char const	*topic_name;
+	rd_kafka_topic_t	*topic;		//!< pre-resolved handle, NULL if topic arg is dynamic.
 } rlm_kafka_xlat_inst_t;
 
-/** Xlat thread instance data - the pre-resolved per-thread topic handle. */
-typedef struct {
-	rd_kafka_topic_t	*topic;
-} rlm_kafka_xlat_thread_inst_t;
-
-/** Xlat instance init: if the topic arg is a compile-time literal, capture
- *  and validate it against the declared-topic list.
+/** Xlat instance init: if the topic arg is a compile-time literal, resolve
+ *  and cache the inst-scoped `rd_kafka_topic_t` handle.
  *
- * The first argument to `%kafka.produce(topic, value)` is the topic
- * name.  When it's a bare string with no xlat expansion, we:
- *
- *  1. Stash the name so the thread-instance init can turn it into a
- *     pre-resolved `rd_kafka_topic_t` handle once per worker (skipping
- *     the rbtree lookup on every call).
- *  2. Validate it against the module's declared topic list so typos
- *     fail at config-compile time rather than the first runtime call.
- *
- * When the arg is dynamic (an attribute reference or nested xlat),
- * we leave `topic_name` NULL and fall back to the per-call lookup in
- * the xlat runtime; validation happens there.
+ * Runs after `mod_instantiate` has created the shared producer and all
+ * topic handles, so the lookup is an rbtree walk against `inst->topics`.
+ * Dynamic topic args (attribute refs, nested xlats) are left to the
+ * per-call lookup in the xlat runtime; validation happens there.
  */
 static int kafka_xlat_instantiate(xlat_inst_ctx_t const *xctx)
 {
@@ -658,45 +677,19 @@ static int kafka_xlat_instantiate(xlat_inst_ctx_t const *xctx)
 	}
 
 	/*
-	 *	Validate now rather than waiting for a worker thread to
-	 *	trip the runtime check.
+	 *	Resolve to the inst-scoped handle now so the xlat
+	 *	runtime can skip the rbtree walk.  Unknown topics fail
+	 *	here at config-compile time.
 	 */
-	if (!kafka_topic_find(&mod_inst->kconf, topic_name)) {
+	inst->topic = kafka_find_topic(mod_inst, topic_name);
+	if (!inst->topic) {
 		cf_log_err(xctx->mctx->mi->conf,
 			   "Kafka topic '%s' is not declared in the '%s' module config",
 			   topic_name, xctx->mctx->mi->name);
 		fr_value_box_clear_value(&topic_vb);
 		return -1;
 	}
-	inst->topic_name = talloc_strdup(inst, topic_name);
 	fr_value_box_clear_value(&topic_vb);
-
-	return 0;
-}
-
-/** Xlat thread-instance init: resolve the cached topic name to a handle
- *
- * Runs once per worker thread for each xlat node that has a literal
- * topic arg.  The module's `mod_thread_instantiate` runs first and
- * populates the per-thread topic handle tree, so by the time we reach
- * here the lookup is just a rbtree walk that we do once and cache.
- */
-static int kafka_xlat_thread_instantiate(xlat_thread_inst_ctx_t const *xctx)
-{
-	rlm_kafka_xlat_inst_t const	*inst = talloc_get_type_abort_const(xctx->inst, rlm_kafka_xlat_inst_t);
-	rlm_kafka_xlat_thread_inst_t	*t_inst = talloc_get_type_abort(xctx->thread, rlm_kafka_xlat_thread_inst_t);
-	rlm_kafka_thread_t		*t;
-
-	/*
-	 *	We didn't cache the topic name the first time through
-	 */
-	if (!inst->topic_name) return 0;
-
-	t = talloc_get_type_abort(xctx->mctx->thread, rlm_kafka_thread_t);
-	if (!fr_cond_assert_msg((t_inst->topic = kafka_thread_topic(t, inst->topic_name)),
-				"pre-resolved topic '%s' not found in thread handle tree", inst->topic_name)) {
-		return -1;
-	}
 
 	return 0;
 }
@@ -713,26 +706,25 @@ static xlat_action_t kafka_xlat_produce_resume(TALLOC_CTX *xctx_ctx, fr_dcursor_
 					       xlat_ctx_t const *xctx,
 					       request_t *request, UNUSED fr_value_box_list_t *in)
 {
-	rlm_kafka_msg_ctx_t	*pctx = talloc_get_type_abort(xctx->rctx, rlm_kafka_msg_ctx_t);
+	rlm_kafka_msg_ctx_t	*pctx = xctx->rctx;		/* malloc'd, not talloc */
 	fr_value_box_t		*vb;
 	bool			delivered = (pctx->err == RD_KAFKA_RESP_ERR_NO_ERROR);
 
-	if (unlikely(!delivered)) REDEBUG("Kafka produce failed: %s", rd_kafka_err2str(pctx->err));
+	if (unlikely(!delivered)) REDEBUG("Kafka produce failed - %s", rd_kafka_err2str(pctx->err));
 
 	MEM(vb = fr_value_box_alloc(xctx_ctx, FR_TYPE_BOOL, NULL));
 	vb->vb_bool = delivered;
 	fr_dcursor_append(out, vb);
 
-	talloc_free(pctx);
+	free(pctx);
 	return XLAT_ACTION_DONE;
 }
 
 /** Xlat cancellation
  *
- * Same semantics as @ref kafka_produce_signal: detach the request from
- * the in-flight `pctx` so the eventual dr_msg_cb discards silently
- * rather than trying to resume a cancelled request.  dr_msg_cb owns
- * the free.
+ * Same semantics as @ref mod_signal: detach the request from the
+ * in-flight `pctx` so the eventual bg cb discards silently rather than
+ * resuming a cancelled request.  The bg cb owns the free.
  *
  * @param[in] xctx    xlat ctx (xctx->rctx is the rlm_kafka_msg_ctx_t).
  * @param[in] request UNUSED.
@@ -740,8 +732,9 @@ static xlat_action_t kafka_xlat_produce_resume(TALLOC_CTX *xctx_ctx, fr_dcursor_
  */
 static void kafka_xlat_produce_signal(xlat_ctx_t const *xctx, UNUSED request_t *request, UNUSED fr_signal_t action)
 {
-	rlm_kafka_msg_ctx_t	*pctx = talloc_get_type_abort(xctx->rctx, rlm_kafka_msg_ctx_t);
-	pctx->request = NULL;
+	rlm_kafka_msg_ctx_t	*pctx = xctx->rctx;
+
+	atomic_store_explicit(&pctx->request, NULL, memory_order_release);
 }
 
 static xlat_arg_parser_t const kafka_xlat_produce_args[] = {
@@ -786,22 +779,23 @@ static xlat_action_t kafka_xlat_produce(UNUSED TALLOC_CTX *xctx_ctx, UNUSED fr_d
 					xlat_ctx_t const *xctx,
 					request_t *request, fr_value_box_list_t *in)
 {
-	rlm_kafka_thread_t			*t = talloc_get_type_abort(xctx->mctx->thread, rlm_kafka_thread_t);
-	rlm_kafka_xlat_thread_inst_t const	*t_inst = xctx->thread;
-	fr_value_box_t				*topic_vb = fr_value_box_list_head(in);
-	fr_value_box_t				*key_vb   = fr_value_box_list_next(in, topic_vb);
-	fr_value_box_t				*value_vb = fr_value_box_list_next(in, key_vb);
-	rd_kafka_topic_t			*topic;
-	rlm_kafka_msg_ctx_t			*pctx;
-	uint8_t const				*key = NULL;
-	size_t					key_len = 0;
+	rlm_kafka_t const		*inst = talloc_get_type_abort_const(xctx->mctx->mi->data, rlm_kafka_t);
+	rlm_kafka_thread_t		*t = talloc_get_type_abort(xctx->mctx->thread, rlm_kafka_thread_t);
+	rlm_kafka_xlat_inst_t const	*xlat_inst = talloc_get_type_abort_const(xctx->inst, rlm_kafka_xlat_inst_t);
+	fr_value_box_t			*topic_vb = fr_value_box_list_head(in);
+	fr_value_box_t			*key_vb   = fr_value_box_list_next(in, topic_vb);
+	fr_value_box_t			*value_vb = fr_value_box_list_next(in, key_vb);
+	rd_kafka_topic_t		*topic;
+	rlm_kafka_msg_ctx_t		*pctx;
+	uint8_t const			*key = NULL;
+	size_t				key_len = 0;
 
 	/*
 	 *	Fast path: a literal topic argument was pre-resolved to
-	 *	an rd_kafka_topic_t at thread_instantiate.
+	 *	an rd_kafka_topic_t at xlat_instantiate time.
 	 */
-	topic = t_inst ? t_inst->topic : NULL;
-	if (!topic) topic = kafka_thread_topic(t, topic_vb->vb_strvalue);
+	topic = xlat_inst->topic;
+	if (!topic) topic = kafka_find_topic(inst, topic_vb->vb_strvalue);
 	if (unlikely(!topic)) {
 		REDEBUG("Kafka topic '%s' is not declared in the module config", topic_vb->vb_strvalue);
 		return XLAT_ACTION_FAIL;
@@ -829,87 +823,132 @@ static xlat_action_t kafka_xlat_produce(UNUSED TALLOC_CTX *xctx_ctx, UNUSED fr_d
 				 ~FR_SIGNAL_CANCEL, pctx);
 }
 
-/** Delivery report callback, runs on the worker thread that owns the producer
+/** Background event callback, runs on librdkafka's bg thread
  *
- * If the request is still alive, stash the result and mark it runnable so
- * the resume function can translate the result to an rcode.  If cancelled
- * (pctx->request == `NULL`) just free the pctx silently.  A `NULL` opaque
- * means the message was produced without a context (e.g. a future
- * fire-and-forget path) - nothing to resume, just return.
+ * Dispatches delivery reports to the originating worker's mailbox.
+ * Runs on a librdkafka-owned thread, so MUST NOT touch talloc (races
+ * worker-thread allocs) or the FR logger (`fr_log` is talloc-backed).
+ * Allowed: plain pointer deref, atomic load/store, `fr_atomic_ring_push`,
+ * `fr_event_user_trigger`, `malloc`/`free`, `rd_kafka_event_destroy`.
  *
- * @param[in] rk        UNUSED.
- * @param[in] msg	librdkafka delivery report.
- * @param[in] opaque    UNUSED (we stash thread context on the message opaque).
+ * For each DR:
+ *   1. Acquire-load `pctx->request`.  If NULL the request was cancelled
+ *      via the signal handler - just `free(pctx)` inline; no thread_inst
+ *      or mailbox access.  Safe even if the owning worker has since
+ *      detached.
+ *   2. Otherwise stash err / partition / offset, push onto
+ *      `target->mailbox`, and `fr_event_user_trigger()` the worker's
+ *      wake event.  The worker is guaranteed alive because cancellation
+ *      happens before thread_detach and any still-live request pins
+ *      its worker.
+ *
+ * `NULL` opaque indicates a fire-and-forget produce - nothing to do.
+ *
+ * @param[in] rk    UNUSED.
+ * @param[in] ev    librdkafka event batch; destroyed at end.
+ * @param[in] uctx  UNUSED (we don't need the inst here).
  */
-static void _kafka_delivery_report_cb(UNUSED rd_kafka_t *rk, rd_kafka_message_t const *msg, UNUSED void *opaque)
+static void _kafka_background_event_cb(UNUSED rd_kafka_t *rk, rd_kafka_event_t *ev, UNUSED void *uctx)
 {
-	rlm_kafka_msg_ctx_t	*pctx;
+	switch (rd_kafka_event_type(ev)) {
+	case RD_KAFKA_EVENT_DR:
+	{
+		rd_kafka_message_t const *msg;
+		while ((msg = rd_kafka_event_message_next(ev))) {
+			rlm_kafka_msg_ctx_t	*pctx;
+			rlm_kafka_thread_t	*t;
 
-	/*
-	 *	A NULL opaque is the documented signal for
-	 *	fire-and-forget produces - nothing to resume or free,
-	 *	just return before we try to unbox the pointer.
-	 */
-	if (!msg->_private) return;
-	pctx = talloc_get_type_abort(msg->_private, rlm_kafka_msg_ctx_t);
+			if (!msg->_private) continue;		/* fire-and-forget */
+
+			pctx = msg->_private;			/* plain cast; no talloc ops */
+
+			/*
+			 *	Advisory: if the request was already cancelled
+			 *	on the worker side, short-circuit and drop the
+			 *	pctx here rather than walking the full dispatch
+			 *	path just for the worker to see NULL again and
+			 *	free it.  Correctness does NOT depend on this
+			 *	check - a missed cancel just means the pctx
+			 *	takes the slow path through the mailbox.  The
+			 *	shutdown barrier is `rd_kafka_flush` in
+			 *	`mod_thread_detach`, not this early-out.
+			 */
+			if (atomic_load_explicit(&pctx->request, memory_order_acquire) == NULL) {
+				free(pctx);
+				continue;
+			}
+
+			pctx->err = msg->err;
+			pctx->partition	= msg->partition;
+			pctx->offset = msg->offset;
+			t = pctx->target;
 
 #ifndef NDEBUG
-	/*
-	 *	DR dispatch must happen on the thread that owns the
-	 *	producer - librdkafka is only allowed to wake us via
-	 *	the polled main queue, so a cross-thread hit here would
-	 *	invalidate the no-lock handling of the inflight list.
-	 */
-	fr_assert(pthread_equal(pthread_self(), pctx->t->worker_tid) != 0);
+			fr_assert(pthread_equal(pthread_self(), t->worker_tid) == 0);
 #endif
 
-	fr_dlist_remove(&pctx->t->inflight, pctx);
+			MEM(fr_atomic_ring_push(t->queue, pctx) == true);
 
-	if (unlikely(!pctx->request)) {
-		talloc_free(pctx);
-		return;
+			(void) fr_event_user_trigger(t->wake);
+		}
+		break;
 	}
 
-	pctx->err = msg->err;
-	pctx->partition = msg->partition;
-	pctx->offset = msg->offset;
+	default:
+		/*
+		 *	Broker-level errors surface via `_kafka_log_cb`
+		 *	on librdkafka's broker threads; anything else
+		 *	reaching this bg cb (instance-scoped errors,
+		 *	throttle events, etc.) is currently swallowed.
+		 *	Add a relaxed-atomic counter off `inst` if we
+		 *	ever need observability here.
+		 */
+		break;
+	}
 
-	unlang_interpret_mark_runnable(pctx->request);
+	rd_kafka_event_destroy(ev);
 }
 
-/** Create a per-thread rd_kafka_topic_t for every declared topic
+/** Destructor for inst-scoped topic handles.  Releases the rd_kafka_topic_t. */
+static int _topic_free(rlm_kafka_topic_t *h)
+{
+	if (h->kt) rd_kafka_topic_destroy(h->kt);
+	return 0;
+}
+
+/** Create a shared rd_kafka_topic_t for every declared topic
  *
- * Called at thread_instantiate.  Walks the `topic { <name> { ... } }`
+ * Called at mod_instantiate.  Walks the `topic { <name> { ... } }`
  * subsections directly off the module's CONF_SECTION - the kafka base
  * library has already parsed each per-topic conf into an
  * `fr_kafka_topic_conf_t` stashed via cf_data on the topic's section,
  * so we just fetch and dup it.
  */
-static int kafka_topic_thread_handles(rlm_kafka_thread_t *t)
+static int kafka_topics_alloc(rlm_kafka_t *inst)
 {
-	MEM(t->topics = fr_rb_inline_talloc_alloc(t, rlm_kafka_topic_t, node, topic_name_cmp, NULL));
+	MEM(inst->topics = fr_rb_inline_talloc_alloc(inst, rlm_kafka_topic_t, node, topic_name_cmp, NULL));
 
-	if (!t->inst->kconf.topics) return 0;
+	if (!inst->kconf.topics) return 0;
 
-	fr_rb_inorder_foreach(t->inst->kconf.topics, fr_kafka_topic_t, topic) {
+	fr_rb_inorder_foreach(inst->kconf.topics, fr_kafka_topic_t, topic) {
 		rlm_kafka_topic_t	*topic_t;
 		rd_kafka_topic_conf_t	*ktc;
 
 		MEM(ktc = rd_kafka_topic_conf_dup(topic->conf->rdtc));
-		MEM(topic_t = talloc_zero(t->topics, rlm_kafka_topic_t));
+		MEM(topic_t = talloc_zero(inst->topics, rlm_kafka_topic_t));
 		MEM(topic_t->name = talloc_strdup(topic_t, topic->name));
-		topic_t->kt = rd_kafka_topic_new(t->rk, topic_t->name, ktc);
+		topic_t->kt = rd_kafka_topic_new(inst->rk, topic_t->name, ktc);
 		if (!topic_t->kt) {
 			/* librdkafka consumes tc only on success */
 			rd_kafka_topic_conf_destroy(ktc);
-			ERROR("Failed creating topic - %s",
+			ERROR("Failed creating topic '%s' - %s",
 			      topic_t->name, rd_kafka_err2str(rd_kafka_last_error()));
 			talloc_free(topic_t);
 			return -1;
 		}
 		talloc_set_destructor(topic_t, _topic_free);
 
-		if (!fr_cond_assert_msg(fr_rb_insert(t->topics, topic_t), "duplicate topic handle")) {
+		if (!fr_cond_assert_msg(fr_rb_insert(inst->topics, topic_t), "duplicate topic handle")) {
 			talloc_free(topic_t);
 			return -1;
 		}
@@ -919,88 +958,74 @@ static int kafka_topic_thread_handles(rlm_kafka_thread_t *t)
 	return 0;
 }
 
-/** Tear down a worker's kafka producer state
+/** Tear down a worker's kafka state
  *
- * Orderly shutdown: detach in-flight requests so any late dr_msg_cbs
- * silently free their pctx rather than resuming a dying interpreter,
- * stop librdkafka from touching our self-pipe, flush outstanding
- * produces within `flush_timeout`, drain the final delivery reports,
- * then destroy the producer handle.
+ * The barrier we need is "no bg cb is mid-invocation for any of our
+ * pctxs when the framework frees `t` / `t->el`".  `rd_kafka_flush`
+ * waits for every outstanding produce's DR to be fired AND the bg cb
+ * to have returned, which gives us exactly that.  If flush times out
+ * (broker unreachable mid-shutdown) we purge all inflight messages -
+ * librdkafka synthesises `ERR__PURGE_QUEUE` DRs for them locally, no
+ * broker round-trip - and a second flush drains those through the
+ * bg cb with an unbounded wait (purge makes the drain finite without
+ * needing a user-configured timeout).
  *
- * @param[in] mctx thread-instance ctx (`mctx->thread` is our
- *                 rlm_kafka_thread_t).
- * @return 0 (never fails fatally - worst case we warn about undrained
- *         queue depth).
+ * The dance is producer-wide, so only the first worker into detach
+ * actually runs it; `detach->mu` serialises, `detach->done` short-
+ * circuits subsequent callers.
+ *
+ * @param[in] mctx thread-instance ctx.
+ * @return 0 (never fails fatally).
  */
 static int mod_thread_detach(module_thread_inst_ctx_t const *mctx)
 {
+	rlm_kafka_t const	*inst = talloc_get_type_abort_const(mctx->mi->data, rlm_kafka_t);
 	rlm_kafka_thread_t	*t = talloc_get_type_abort(mctx->thread, rlm_kafka_thread_t);
 	rlm_kafka_msg_ctx_t	*pctx;
 
-	/*
-	 *	Detach all in-flight requests.  After this, dr_msg_cb will
-	 *	discard delivery reports rather than try to resume a dying
-	 *	interpreter.
-	 */
-	for (pctx = fr_dlist_head(&t->inflight); pctx; pctx = fr_dlist_next(&t->inflight, pctx)) {
-		pctx->request = NULL;
-	}
+	pthread_mutex_lock(&inst->detach->mu);
+	if (!inst->detach->done) {
+		rd_kafka_resp_err_t	err;
 
-	/*
-	 *	Stop librdkafka from writing to our pipe before we close it.
-	 *	Passing fd=-1 disables the io event.
-	 */
-	if (t->rk && t->main_q) (void) rd_kafka_queue_io_event_enable(t->main_q, -1, NULL, 0);
+		err = rd_kafka_flush(inst->rk, fr_time_delta_to_msec(inst->flush_timeout));
+		if (unlikely(err != RD_KAFKA_RESP_ERR_NO_ERROR)) {
+			WARN("%s - Shutdown flush timed out, purging %d in-flight message(s)",
+			     inst->log_prefix, rd_kafka_outq_len(inst->rk));
 
-	if (t->ev_fd) {
-		(void) fr_event_fd_delete(t->el, t->wake_pipe[0], FR_EVENT_FILTER_IO);
-		t->ev_fd = NULL;
-	}
+			rd_kafka_purge(inst->rk, RD_KAFKA_PURGE_F_QUEUE | RD_KAFKA_PURGE_F_INFLIGHT);
 
-	if (t->rk) {
-		rd_kafka_resp_err_t	ferr;
-
-		ferr = rd_kafka_flush(t->rk, fr_time_delta_to_msec(t->inst->flush_timeout));
-		if (ferr != RD_KAFKA_RESP_ERR_NO_ERROR) {
-			WARN("kafka - Flush timed out - %d messages remain in queue",
-			     rd_kafka_outq_len(t->rk));
+			/*
+			 *	Drain the purge-generated DRs.  No broker
+			 *	round-trip left; drain time is bounded by
+			 *	bg cb processing speed (us per pctx).
+			 *	-1 == wait indefinitely.
+			 */
+			(void) rd_kafka_flush(inst->rk, -1);
 		}
 
-		while (rd_kafka_poll(t->rk, 0) > 0) {
-			/* drain any dr_cbs queued by flush */
-		}
+		inst->detach->done = true;
 	}
+	pthread_mutex_unlock(&inst->detach->mu);
 
-	if (t->topics) TALLOC_FREE(t->topics);
-	if (t->main_q) {
-		rd_kafka_queue_destroy(t->main_q);
-		t->main_q = NULL;
-	}
-	if (t->rk) {
-		rd_kafka_destroy(t->rk);
-		t->rk = NULL;
-	}
+	TALLOC_FREE(t->wake);
 
-	if (t->wake_pipe[0] >= 0) {
-		close(t->wake_pipe[0]);
-		t->wake_pipe[0] = -1;
-	}
-	if (t->wake_pipe[1] >= 0) {
-		close(t->wake_pipe[1]);
-		t->wake_pipe[1] = -1;
-	}
+	/*
+	 *	Drain anything the bg cb pushed onto us before the flush
+	 *	returned.  Each pctx has either `request == NULL`
+	 *	(cancelled) or a still-live request whose owning worker
+	 *	is us; the normal dispatch path does the right thing.
+	 */
+	while (fr_atomic_ring_pop(t->queue, (void **)&pctx)) kafka_delivery_notification(pctx);
 
 	return 0;
 }
 
-/** Stand up this worker's kafka producer
+/** Stand up this worker's kafka mailbox + wake event
  *
- * Creates the per-worker rd_kafka_t (duping the shared fr_kafka_conf_t
- * so librdkafka owns its own copy), builds per-thread rd_kafka_topic_t
- * handles for every declared topic, wires the producer's main queue to
- * a non-blocking self-pipe, and registers the pipe's read end with the
- * worker's event loop.  From this point onward delivery reports and
- * broker errors flow inline on this thread via @ref _kafka_fd_readable.
+ * Allocates the segmented SPSC ring that the bg cb will push delivery
+ * reports onto and registers the `EVFILT_USER` wake event the cb uses
+ * to kick us.  The shared producer itself is created once at
+ * `mod_instantiate` - there's nothing per-worker to wire up there.
  *
  * @param[in] mctx thread-instance ctx (`mctx->thread` is our
  *                 rlm_kafka_thread_t, `mctx->el` is the worker's
@@ -1009,114 +1034,43 @@ static int mod_thread_detach(module_thread_inst_ctx_t const *mctx)
  */
 static int mod_thread_instantiate(module_thread_inst_ctx_t const *mctx)
 {
-	rlm_kafka_t const	*inst = talloc_get_type_abort_const(mctx->mi->data, rlm_kafka_t);
 	rlm_kafka_thread_t	*t = talloc_get_type_abort(mctx->thread, rlm_kafka_thread_t);
-	rd_kafka_conf_t		*conf;
-	char			errstr[512];
 
-	t->inst = inst;
 	t->el = mctx->el;
-	t->wake_pipe[0] = t->wake_pipe[1] = -1;
 
 #ifndef NDEBUG
 	t->worker_tid = pthread_self();
 #endif
 
-	fr_dlist_talloc_init(&t->inflight, rlm_kafka_msg_ctx_t, entry);
-
 	/*
-	 *	rd_kafka_new consumes the conf, so dup it.
+	 *	Segment size is a growth-granularity knob, not a cap: the
+	 *	ring grows on demand, so 1024 just controls how often the
+	 *	bg thread has to malloc a fresh segment during bursts.
 	 */
-	conf = rd_kafka_conf_dup(inst->kconf.conf);
-	rd_kafka_conf_set_dr_msg_cb(conf, _kafka_delivery_report_cb);
-	rd_kafka_conf_set_error_cb(conf, _kafka_error_cb);
-	rd_kafka_conf_set_opaque(conf, t);
+	MEM(t->queue = fr_atomic_ring_alloc(t, 1024));
 
-	t->rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
-	if (!t->rk) {
-		rd_kafka_conf_destroy(conf);			/* only consumed on success */
-		ERROR("rd_kafka_new failed: %s", errstr);
+	if (fr_event_user_insert(t, t->el, &t->wake, false, _kafka_wake, t) < 0) {
+		PERROR("fr_event_user_insert failed");
 		return -1;
 	}
 
-	t->main_q = rd_kafka_queue_get_main(t->rk);
-	if (!t->main_q) {
-		ERROR("rd_kafka_queue_get_main returned NULL");
-		goto error;
-	}
-
-	if (kafka_topic_thread_handles(t) < 0) goto error;
-
-	/*
-	 *	Wire up the self-pipe.  librdkafka writes a single byte to the
-	 *	write end whenever the main queue transitions from empty to
-	 *	non-empty, waking our event loop so _kafka_fd_readable() can
-	 *	poll the queue.
-	 */
-	if (pipe(t->wake_pipe) < 0) {
-		ERROR("pipe() failed - %s", fr_syserror(errno));
-		goto error;
-	}
-	(void) fr_nonblock(t->wake_pipe[0]);
-	(void) fr_nonblock(t->wake_pipe[1]);
-
-	rd_kafka_queue_io_event_enable(t->main_q, t->wake_pipe[1], "x", 1);
-
-	if (fr_event_fd_insert(t, &t->ev_fd, t->el, t->wake_pipe[0],
-			       _kafka_fd_readable, NULL, _kafka_fd_error, t) < 0) {
-		PERROR("fr_event_fd_insert failed");
-		rd_kafka_queue_io_event_enable(t->main_q, -1, NULL, 0);
-		goto error;
-	}
-
 	return 0;
-
-error:
-	if (t->topics) TALLOC_FREE(t->topics);
-	if (t->main_q) {
-		rd_kafka_queue_destroy(t->main_q);
-		t->main_q = NULL;
-	}
-	if (t->rk) {
-		rd_kafka_destroy(t->rk);
-		t->rk = NULL;
-	}
-	if (t->wake_pipe[0] >= 0) close(t->wake_pipe[0]);
-	if (t->wake_pipe[1] >= 0) close(t->wake_pipe[1]);
-	return -1;
 }
 
-
-/** Module config: just the kafka base producer config for now
- *
- * Kept as a local array rather than pointing `common.config` directly
- * at `KAFKA_BASE_PRODUCER_CONFIG` so we can drop in rlm_kafka-specific
- * entries (or additional librdkafka properties) alongside it later
- * without touching the library.
- */
-static conf_parser_t const module_config[] = {
-	KAFKA_BASE_CONFIG,
-	KAFKA_PRODUCER_CONFIG,
-
-	/*
-	 *	How long to wait for in-flight messages to drain when a
-	 *	worker tears down its producer handle.  Module-level (not
-	 *	a librdkafka property) so we own the CONF_PARSER entry
-	 *	rather than the kafka base library.
-	 */
-	{ FR_CONF_OFFSET("flush_timeout", rlm_kafka_t, flush_timeout), .dflt = "5s" },
-
-	CONF_PARSER_TERMINATOR
-};
+/** Destructor for the detach sync struct: tear down the pthread mutex */
+static int _kafka_detach_sync_free(rlm_kafka_detach_sync_t *d)
+{
+	pthread_mutex_destroy(&d->mu);
+	return 0;
+}
 
 /** Module-instance setup
  *
- * Stash the instance name for later use as a log prefix (librdkafka's
- * log_cb fires from internal threads, so no mctx is in scope at that
- * point), then register `_kafka_log_cb` on the shared producer conf.
- * Every per-thread `rd_kafka_conf_dup()` in `mod_thread_instantiate`
- * inherits this registration, so all producers feed through the same
- * bridge into the server log.
+ * Builds the log prefix, wires up the log + background event callbacks
+ * on the shared conf, enables DR / ERROR events, creates the single
+ * shared producer, forwards the main queue to the background queue
+ * (so DRs reach `_kafka_background_event_cb` via librdkafka's own bg
+ * thread), and finally creates the inst-scoped topic handles.
  *
  * @param[in] mctx module-instance ctx.
  * @return 0 on success, -1 on error.
@@ -1124,9 +1078,121 @@ static conf_parser_t const module_config[] = {
 static int mod_instantiate(module_inst_ctx_t const *mctx)
 {
 	rlm_kafka_t	*inst = talloc_get_type_abort(mctx->mi->data, rlm_kafka_t);
+	rd_kafka_conf_t	*conf;
+	char		errstr[512];
 
 	MEM(inst->log_prefix = talloc_typed_asprintf(inst, "rlm_kafka (%s)", mctx->mi->name));
-	rd_kafka_conf_set_log_cb(inst->kconf.conf, _kafka_log_cb);
+
+	/*
+	 *	rd_kafka_new consumes the conf on success.  The original
+	 *	lives under a talloc sentinel that destroys it at inst
+	 *	teardown, so dup it before handing ownership off.
+	 */
+	MEM(conf = rd_kafka_conf_dup(inst->kconf.conf));
+	rd_kafka_conf_set_log_cb(conf, _kafka_log_cb);
+	rd_kafka_conf_set_background_event_cb(conf, _kafka_background_event_cb);
+	rd_kafka_conf_set_events(conf, RD_KAFKA_EVENT_DR | RD_KAFKA_EVENT_ERROR);
+	rd_kafka_conf_set_opaque(conf, inst);
+
+	inst->rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
+	if (!inst->rk) {
+		rd_kafka_conf_destroy(conf);			/* only consumed on success */
+		ERROR("rd_kafka_new failed - %s", errstr);
+		return -1;
+	}
+
+	/*
+	 *	Producer DRs land on the main queue by default; the bg cb
+	 *	only runs for events on the background queue.  Forward
+	 *	main -> bg so delivery reports reach our cb.
+	 */
+	{
+		rd_kafka_queue_t *main_q = rd_kafka_queue_get_main(inst->rk);
+		rd_kafka_queue_t *bg_q   = rd_kafka_queue_get_background(inst->rk);
+
+		rd_kafka_queue_forward(main_q, bg_q);
+		rd_kafka_queue_destroy(main_q);
+		rd_kafka_queue_destroy(bg_q);
+	}
+
+	if (kafka_topics_alloc(inst) < 0) {
+	error:
+		rd_kafka_destroy(inst->rk);
+		inst->rk = NULL;
+		return -1;
+	}
+
+	/*
+	 *	Detach-sync lives outside the mprotected instance region so
+	 *	`pthread_mutex_lock` can write to it.  Allocate orphaned and
+	 *	link to `inst`'s lifetime so teardown is automatic.
+	 */
+	MEM(inst->detach = talloc_zero(NULL, rlm_kafka_detach_sync_t));
+	pthread_mutex_init(&inst->detach->mu, NULL);
+	talloc_set_destructor(inst->detach, _kafka_detach_sync_free);
+	if (talloc_link_ctx(inst, inst->detach) < 0) {
+		TALLOC_FREE(inst->detach);
+		goto error;
+	}
+
+	return 0;
+}
+
+/** Module detach: tear down the shared producer
+ *
+ *  1. `rd_kafka_flush` gives in-flight produces a grace window to
+ *     complete and fire their DRs through the bg cb.  By this point
+ *     every worker has already detached; any remaining pctxs have
+ *     `request == NULL` and will be freed inline by the bg cb.
+ *  2. Free the topic rbtree explicitly BEFORE `rd_kafka_destroy` -
+ *     destroy auto-tears-down topic handles attached to the producer,
+ *     and we'd double-free via `_topic_free` otherwise.
+ *  3. `rd_kafka_destroy` blocks until the bg thread exits; after that
+ *     no more callbacks can fire.
+ */
+static int mod_detach(module_detach_ctx_t const *mctx)
+{
+	rlm_kafka_t	*inst = talloc_get_type_abort(mctx->mi->data, rlm_kafka_t);
+
+	if (inst->rk) {
+		rd_kafka_resp_err_t	ferr;
+
+		ferr = rd_kafka_flush(inst->rk, fr_time_delta_to_msec(inst->flush_timeout));
+		if (ferr != RD_KAFKA_RESP_ERR_NO_ERROR) {
+			WARN("kafka - flush timed out; %d messages remain in queue",
+			     rd_kafka_outq_len(inst->rk));
+		}
+	}
+
+	TALLOC_FREE(inst->topics);
+
+	if (inst->rk) {
+		rd_kafka_destroy(inst->rk);
+		inst->rk = NULL;
+	}
+
+	return 0;
+}
+
+/** Bootstrap-phase setup
+ *
+ * Just registers the `%kafka.produce()` xlat.  Topic declarations are
+ * looked up directly via `cf_section_find` at call_env parse time
+ * (see `_kafka_topic_env_parse`), and at worker thread_instantiate
+ * time via `cf_section_find_next`, so there's nothing to build here.
+ *
+ * @param[in] mctx module-instance ctx.
+ * @return 0 on success, -1 on error.
+ */
+static int mod_bootstrap(module_inst_ctx_t const *mctx)
+{
+	xlat_t	*xlat;
+
+	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, "produce", kafka_xlat_produce, FR_TYPE_BOOL);
+	if (!xlat) return -1;
+	xlat_func_args_set(xlat, kafka_xlat_produce_args);
+	xlat_func_instantiate_set(xlat, kafka_xlat_instantiate,
+				  rlm_kafka_xlat_inst_t, NULL, NULL);
 
 	return 0;
 }
@@ -1149,31 +1215,6 @@ static void mod_unload(void)
 	fr_kafka_free();
 }
 
-/** Bootstrap-phase setup
- *
- * Just registers the `%kafka.produce()` xlat.  Topic declarations are
- * looked up directly via `cf_section_find` at call_env parse time
- * (see `_kafka_topic_env_parse`), and at worker thread_instantiate
- * time via `cf_section_find_next`, so there's nothing to build here.
- *
- * @param[in] mctx module-instance ctx.
- * @return 0 on success, -1 on error.
- */
-static int mod_bootstrap(module_inst_ctx_t const *mctx)
-{
-	xlat_t	*xlat;
-
-	xlat = module_rlm_xlat_register(mctx->mi->boot, mctx, "produce", kafka_xlat_produce, FR_TYPE_BOOL);
-	if (!xlat) return -1;
-	xlat_func_args_set(xlat, kafka_xlat_produce_args);
-	xlat_func_instantiate_set(xlat, kafka_xlat_instantiate,
-				  rlm_kafka_xlat_inst_t, NULL, NULL);
-	xlat_func_thread_instantiate_set(xlat, kafka_xlat_thread_instantiate,
-					 rlm_kafka_xlat_thread_inst_t, NULL, NULL);
-
-	return 0;
-}
-
 module_rlm_t rlm_kafka = {
 	.common = {
 		.magic			= MODULE_MAGIC_INIT,
@@ -1185,6 +1226,7 @@ module_rlm_t rlm_kafka = {
 		.unload			= mod_unload,
 		.bootstrap		= mod_bootstrap,
 		.instantiate		= mod_instantiate,
+		.detach			= mod_detach,
 		.thread_instantiate	= mod_thread_instantiate,
 		.thread_detach		= mod_thread_detach
 	},
