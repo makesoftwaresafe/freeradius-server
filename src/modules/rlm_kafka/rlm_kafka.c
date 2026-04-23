@@ -592,7 +592,7 @@ static void mod_signal(module_ctx_t const *mctx, request_t *request, UNUSED fr_s
 static unlang_action_t CC_HINT(nonnull) mod_produce(UNUSED unlang_result_t *p_result,
 						    module_ctx_t const *mctx, request_t *request)
 {
-	rlm_kafka_t		*inst = talloc_get_type_abort_const(mctx->mi->data, rlm_kafka_t);
+	rlm_kafka_t const	*inst = talloc_get_type_abort_const(mctx->mi->data, rlm_kafka_t);
 	rlm_kafka_thread_t	*t = talloc_get_type_abort(mctx->thread, rlm_kafka_thread_t);
 	rlm_kafka_env_t		*env = talloc_get_type_abort(mctx->env_data, rlm_kafka_env_t);
 	rd_kafka_topic_t	*topic;
