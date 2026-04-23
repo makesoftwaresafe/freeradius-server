@@ -50,7 +50,7 @@ typedef struct {
 
 	fr_rb_tree_t		*topics;	//!< Declared topics, keyed by name.  Populated during
 						//!< config parsing by the per-topic hook on the `topic { }`
-						//!< subsection; use `kafka_topic_lookup` to query.
+						//!< subsection; use `kafka_topic_conf_find` to query.
 } fr_kafka_conf_t;
 
 typedef struct {
@@ -61,7 +61,7 @@ typedef struct {
  *
  * Built by the library's per-topic parse hook, indexed on the parent
  * `fr_kafka_conf_t.topics` tree.  Callers typically retrieve via
- * `kafka_topic_lookup` rather than poking this struct directly.
+ * `kafka_topic_conf_find` rather than poking this struct directly.
  */
 struct fr_kafka_topic_s {
 	char const		*name;		//!< as it appeared in config
@@ -124,7 +124,7 @@ int kafka_topic_subsection_parse(TALLOC_CTX *ctx, void *out, void *base, CONF_IT
  * @return the `fr_kafka_topic_t`, or NULL if no topic of that name was
  *         declared (or if no topics have been parsed yet).
  */
-fr_kafka_topic_t	*kafka_topic_find(fr_kafka_conf_t const *kc, char const *name);
+fr_kafka_topic_t	*kafka_topic_conf_find(fr_kafka_conf_t const *kc, char const *name);
 
 /** Initialise librdkafka's global state (SSL / SASL / internal ref-count)
  *
