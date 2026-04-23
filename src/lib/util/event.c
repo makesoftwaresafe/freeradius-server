@@ -1928,7 +1928,17 @@ int fr_event_user_trigger(fr_event_user_t *ev)
 {
 	struct kevent evset;
 
-	EV_SET(&evset, (uintptr_t)ev, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL);
+	/*
+	 *	The event was registered with EV_DISPATCH, which makes
+	 *	kqueue auto-disable it each time it fires.  A plain
+	 *	NOTE_TRIGGER on a disabled event is accepted by the kernel
+	 *	but not delivered to userspace until the event is
+	 *	re-enabled, so we pass EV_ENABLE alongside the trigger to
+	 *	re-arm it atomically.  Without this, the second and
+	 *	subsequent trigger calls would silently never wake the
+	 *	consumer.
+	 */
+	EV_SET(&evset, (uintptr_t)ev, EVFILT_USER, EV_ENABLE, NOTE_TRIGGER, 0, NULL);
 
 	if (unlikely(kevent(ev->el->kq, &evset, 1, NULL, 0, NULL) < 0)) {
 		fr_strerror_printf("Failed triggering user event - kevent %s", fr_syserror(evset.flags));
