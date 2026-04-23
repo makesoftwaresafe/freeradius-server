@@ -89,6 +89,12 @@ services:
 
   kafka-consumer:
     image: confluentinc/cp-kcat:latest
+    # cp-kcat defaults to uid 1000 (appuser).  On the self-hosted CI
+    # runners the bind-mounted listener dir is owned by root with
+    # mode 0755, so the default user can't write its summary line
+    # ("Permission denied").  Force root to sidestep the ownership
+    # mismatch - the image has nothing privileged worth protecting.
+    user: "0:0"
     depends_on:
       kafka:
         condition: service_healthy
