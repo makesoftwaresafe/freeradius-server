@@ -1,25 +1,24 @@
 # ---------------------------------------------------------------
 #  Docker Compose Test Environment:
 #
-#                      Access-Request
-#   load-generator  -----------------> kafka-producer1
-#                                            |
-#                                            | kafka.produce
-#                                            v
-#                                           kafka (redpanda)
-#                                            |
-#                                            | consume
-#                                            v
-#                                    kafka-consumer
-#                                       (echoes each
-#                                       message back
-#                                       to the test
-#                                       framework)
+#   kafka-producer1 (rlm_kafka)
+#         ^           |
+#         |           | kafka.produce
+#         |           v
+#     radclient     kafka (broker)
+#     (via framework  |
+#      exec on same   | consume
+#      container)     v
+#                kafka-consumer
+#                   (one listener line per received
+#                    message + a summary; the test
+#                    framework reads those to verify)
 #
-#  Each Access-Request triggers exactly one produce.  kafka-consumer
-#  reads the topic and writes one listener line per received message
-#  plus a final summary line; the test framework verifies the count
-#  matches the number of packets sent.
+#  The test framework drives load by exec-ing `radclient` inside the
+#  kafka-producer1 container and sending to the RADIUS listener at
+#  localhost:1812.  Each Access-Request triggers exactly one
+#  kafka.produce.  Keeping load generation in-container means no
+#  separate load-generator service and no inter-container RADIUS hop.
 # ---------------------------------------------------------------
 x-common-config: &id001
   cap_add:
@@ -76,14 +75,56 @@ services:
         condition: service_healthy
     volumes:
     - ${DATA_PATH}/freeradius/kafka-producer1/radiusd.conf:/etc/raddb/radiusd.conf
+    - ${DATA_PATH}/freeradius/kafka-producer1/load-generator-packets/:/etc/raddb/load-generator-packets/
+    - ${DATA_PATH}/freeradius/env-setup.sh:/tmp/env-setup.sh
     - ${LISTENER_DIR}/:/var/run/multi-server/
     restart: unless-stopped
+    environment:
+      #
+      #  YAML's `<<:` anchor merge doesn't union nested dicts, so
+      #  declaring an `environment:` block on the service replaces
+      #  the one inherited from x-common-config.  Re-include the
+      #  shared vars here.
+      #
+      TEST_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+      TEST_SUBNET: {{ test_subnet | default('172.16.0.0/12') }}
+      #
+      #  proto_load profile - read by the `listen load { step { ... } }`
+      #  block in this container's radiusd.conf.  The test's loadgen:
+      #  dict in its .test.yml feeds these.
+      #
+      TEST_LOADGEN_START_PPS:    "{{ loadgen.start_pps }}"
+      TEST_LOADGEN_MAX_PPS:      "{{ loadgen.max_pps }}"
+      TEST_LOADGEN_DURATION:     "{{ loadgen.duration }}"
+      TEST_LOADGEN_STEP:         "{{ loadgen.step }}"
+      TEST_LOADGEN_MAX_BACKLOG:  "{{ loadgen.max_backlog }}"
+      TEST_LOADGEN_PARALLEL:     "{{ loadgen.parallel }}"
+      #
+      #  Hard cap on packets emitted.  Tests that want the emit
+      #  count to equal the consume count default this to
+      #  `expected_messages`; tests where some loss is expected
+      #  (e.g. the reconnect test, where a brief outage can fail a
+      #  small fraction of in-flight produces) override with a
+      #  larger `loadgen_num_messages`.
+      #
+      TEST_LOADGEN_NUM_MESSAGES: "{{ loadgen_num_messages | default(expected_messages) }}"
     healthcheck:
       test: ["CMD-SHELL", "echo 'Message-Authenticator = 0x00' | radclient localhost:1812 status testing123"]
       interval: 2s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      start_period: 45s
+    #  The env-setup source installs iproute2 so tests that need to
+    #  apply netem qdiscs (e.g. the reconnect test's packet_loss
+    #  action) have `tc` available inside the container.  Harmless
+    #  no-op for tests that don't.
+    entrypoint:
+    - bash
+    - -c
+    - |
+      source /tmp/env-setup.sh && \
+      exec /docker-entrypoint.sh "$@"
+    - --
     command: ["freeradius", "-f", "-l", "stdout"]
     <<: *id001
 
@@ -113,26 +154,4 @@ services:
     - bash
     - /usr/local/bin/consume.sh
     restart: "no"
-    <<: *id001
-
-  load-generator:
-    image: freeradius-build:latest
-    depends_on:
-      kafka-producer1:
-        condition: service_healthy
-      kafka-consumer:
-        condition: service_started
-    volumes:
-    - ${DATA_PATH}/freeradius/load-generator/template.d/load-generator-templates:/etc/raddb/template.d/load-generator-templates
-    - ${DATA_PATH}/freeradius/load-generator/mods-config/files/authorize:/etc/raddb/mods-config/files/authorize
-    - ${DATA_PATH}/freeradius/load-generator/radiusd.conf:/etc/raddb/radiusd.conf
-    - ${DATA_PATH}/freeradius/load-generator/load-generator-packets/:/etc/raddb/load-generator-packets/
-    - ${LISTENER_DIR}/:/var/run/multi-server/
-    entrypoint:
-    - bash
-    - -lc
-    - |
-      # Keep the container alive.  The test framework starts FreeRADIUS
-      # and runs commands via 'docker exec' so it can control timing.
-      sleep infinity
     <<: *id001
