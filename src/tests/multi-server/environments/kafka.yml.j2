@@ -31,6 +31,15 @@ x-common-config: &id001
 services:
   kafka:
     image: docker.redpanda.com/redpandadata/redpanda:latest
+    # Redpanda's seastar reactor opens io_uring / eventfd / perf_event
+    # fds during startup; the default Docker seccomp profile on the
+    # self-hosted CI runners blocks enough of those that close() fails
+    # with EINVAL on a stale handle and the broker aborts during init.
+    # (Local Docker Desktop's profile is looser and doesn't hit this.)
+    # Relaxing seccomp for this single service unblocks CI without
+    # giving the broker any broader host access.
+    security_opt:
+    - seccomp:unconfined
     # Override the default command to advertise the broker under its
     # compose service name.  Without this the broker tells clients to
     # reconnect at 127.0.0.1:9092 which only works when client and
