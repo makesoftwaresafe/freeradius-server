@@ -30,7 +30,12 @@ x-common-config: &id001
     TEST_SUBNET: {{ test_subnet | default('172.16.0.0/12') }}
 services:
   kafka:
-    image: docker.redpanda.com/redpandadata/redpanda:latest
+    # Pinned to a specific 24.3.x release instead of :latest - the
+    # current :latest (v26.1.6) hits a close() EINVAL during seastar
+    # reactor init on the self-hosted CI runners even when the
+    # container runs privileged.  Bump when a newer tag is verified
+    # to start cleanly on the runner.
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.15
     # Redpanda's seastar reactor aborts during init under the default
     # Docker sandbox on self-hosted CI runners (close() EINVAL on an
     # internal fd).  Run privileged so the broker starts reliably; it's
