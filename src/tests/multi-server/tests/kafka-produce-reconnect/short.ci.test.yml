@@ -30,18 +30,10 @@ loadgen:
   parallel: 1
   max_backlog: 1000
 
-#
-#  proto_load overshoots slightly - the `num_messages` cap stops
-#  emission, but a handful of requests already in-flight in the
-#  worker pool finish after that.  Set num_messages well above
-#  expected_messages so the consumer always has enough to count.
-#
-#  expected_messages is what the consumer (kcat -c N) stops at,
-#  so the kafka-consumer-summary line declares PASS as long as at
-#  least `expected_messages` made it through the disconnect /
-#  reconnect cycle.
-#
-loadgen_num_messages: 250
+#  30s x 10pps = 300, but num_messages caps at 200 so proto_load
+#  stops at 200 emitted.  Consumer expects exactly 200.  If the
+#  disconnect / reconnect path drops ANY message the test fails -
+#  that's deliberate, we want to catch regressions, not hide them.
 expected_messages: 200
 
 kafka_topic: fr-multi-server-reconnect-test
