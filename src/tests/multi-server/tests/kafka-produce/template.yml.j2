@@ -1,7 +1,8 @@
 timeout: {{ test_timeout }}
+environment_timeout: {{ environment_timeout | default(test_timeout) }}
 state_order: sequence
 states:
-  state_1:
+  produce_and_consume:
     description: >
       proto_load on kafka-producer1 generates {{ expected_messages }}
       Access-Requests into its own `recv Access-Request`, each of
@@ -13,7 +14,7 @@ states:
         - execute_command:
             command: "true"
     verify:
-      timeout: {{ test_verify_timeout }}
+      timeout: {{ state_produce_and_consume_timeout }}
       trigger_mode: unordered
       triggers:
       - kafka-consumer-summary:

@@ -61,6 +61,21 @@ modules {
 		#
 		auto_create_topic = yes
 
+		#
+		#  Shrink librdkafka's "topic just appeared, wait for it
+		#  to propagate" window (default 30s).  With the broker
+		#  also set to auto-create topics, the first produce to
+		#  a fresh topic would otherwise stall the full 30s after
+		#  the initial UNKNOWN_TOPIC metadata reply, racing
+		#  max_request_time.  A small value is safe in a single-
+		#  broker test rig where "propagation" is trivial.
+		#
+		metadata {
+			max_propagation = 1s
+		}
+
+		debug = "broker,topic,msg,queue"
+
 		topic {
 			{{ kafka_topic | default('fr-multi-server-test') }} {
 				#

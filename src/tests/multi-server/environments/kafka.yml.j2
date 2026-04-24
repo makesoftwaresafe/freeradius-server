@@ -131,7 +131,7 @@ services:
       source /tmp/env-setup.sh && \
       exec /docker-entrypoint.sh "$@"
     - --
-    command: ["freeradius", "-f", "-l", "stdout"]
+    command: ["freeradius", "-l", "stdout", "-xxx", "-f", "-n", "radiusd"]
     <<: *id001
 
   kafka-consumer:

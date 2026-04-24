@@ -10,7 +10,14 @@ loadgen:
   max_pps: 5
   duration: 4
   step: 5
-  parallel: 1
+  #
+  #  parallel > 1 lets proto_load keep multiple produce calls in
+  #  flight simultaneously.  With parallel=1 the generator is
+  #  serialised on the kafka.produce round trip - each request
+  #  yields until its delivery report arrives - which caps the
+  #  achievable rate well below start_pps/max_pps.
+  #
+  parallel: 5
   max_backlog: 1000
 
 #
@@ -21,9 +28,18 @@ expected_messages: 20
 
 kafka_topic: fr-multi-server-test
 
-#  Timeouts sized for the self-hosted CI DinD runners - JVM kafka
-#  startup through the healthcheck + proto_load burst + consumer
-#  drain all have to fit inside `test_verify_timeout`.
-test_timeout: 120
-test_verify_timeout: 60
-consumer_timeout: 90
+#  environment_timeout: how long to wait for compose up to bring
+#  every service healthy (kafka boot + radiusd ready + healthcheck)
+#  before the state machine starts.  Runs before test_timeout.
+#
+#  test_timeout: wall-clock budget for the state machine phase
+#  (starts once the environment is up).
+#
+#  state_produce_and_consume_timeout: verify-window for the
+#  produce_and_consume state.  With a healthy stack proto_load
+#  emits its burst in ~4s and the consumer writes its summary
+#  within a second or two, so 30s is plenty.
+environment_timeout: 120
+test_timeout: 180
+state_produce_and_consume_timeout: 30
+consumer_timeout: 60
