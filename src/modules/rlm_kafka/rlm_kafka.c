@@ -324,7 +324,7 @@ static void _kafka_wake(UNUSED fr_event_list_t *el, void *uctx)
 
 		if (!request) {
 			free(pctx);
-			return;
+			continue;
 		}
 		unlang_interpret_mark_runnable(request);
 	}
