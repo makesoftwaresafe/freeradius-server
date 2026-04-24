@@ -51,6 +51,16 @@ modules {
 		#
 		server = "kafka:9092"
 
+		#
+		#  Ask librdkafka to request broker-side topic auto-creation
+		#  during metadata resolution.  Without this the broker only
+		#  auto-creates on the first PRODUCE it sees, but librdkafka
+		#  won't send a PRODUCE until metadata says the topic exists -
+		#  classic chicken-and-egg that stalls the first burst of
+		#  yielded requests for up to 30s and races max_request_time.
+		#
+		auto_create_topic = yes
+
 		topic {
 			{{ kafka_topic | default('fr-multi-server-test') }} {
 				#
