@@ -78,7 +78,13 @@ services:
     - ${DATA_PATH}/freeradius/kafka-producer1/load-generator-packets/:/etc/raddb/load-generator-packets/
     - ${DATA_PATH}/freeradius/env-setup.sh:/tmp/env-setup.sh
     - ${LISTENER_DIR}/:/var/run/multi-server/
-    restart: unless-stopped
+    #
+    #  proto_load runs the generator to completion and then radiusd
+    #  exits normally.  If docker restarts the container at that point
+    #  the next generator run duplicates traffic and races the test
+    #  framework's verify phase.  Let it exit once and stay exited.
+    #
+    restart: "no"
     environment:
       #
       #  YAML's `<<:` anchor merge doesn't union nested dicts, so
