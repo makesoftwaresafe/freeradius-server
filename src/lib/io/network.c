@@ -1243,6 +1243,7 @@ static void fr_network_write(UNUSED fr_event_list_t *el, UNUSED int sockfd, UNUS
 
 			PERROR("Failed writing to socket %s", s->listen->name);
 
+			switch (errno) {
 			/*
 			 *	As a special hack, check for something
 			 *	that will never be returned from a
@@ -1250,9 +1251,27 @@ static void fr_network_write(UNUSED fr_event_list_t *el, UNUSED int sockfd, UNUS
 			 *	signals to us that we have to close
 			 *	the socket, but NOT complain about it.
 			 */
-			if ((errno == ECONNREFUSED) || (errno == ECONNRESET)) goto dead;
+			case ECONNREFUSED:
+			case ECONNRESET:
+				break;
 
-			if (li->app_io->error) li->app_io->error(li);
+				/*
+				 *	These are temporary errors.  We try to save the data for later.
+				 */
+			case ENETDOWN:
+			case ENETUNREACH:
+				if (s->pending) {
+					fr_message_done(&cd->m);
+					return;
+				}
+
+				s->written = 0;
+				goto save_pending;
+
+			default:
+				if (li->app_io->error) li->app_io->error(li);
+				break;
+			}
 
 		dead:
 			fr_message_done(&cd->m);
