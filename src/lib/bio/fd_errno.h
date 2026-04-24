@@ -54,8 +54,11 @@ case EPIPE:
 	 *	@todo - do this only for connected UDP sockets.
 	 */
 	case EMSGSIZE:
-		return fr_bio_error(IO);
 #endif
+
+	case ENETDOWN:
+	case ENETUNREACH:
+		return fr_bio_error(IO);
 
 default:
 	/*
