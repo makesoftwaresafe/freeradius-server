@@ -190,7 +190,16 @@ server kafka-producer {
 
 	{% raw %}
 	send Access-Accept {
-		%linelog_test_framework("kafka-producer-accept {\"User-Name\": %json.quote(%{User-Name})}")
+		#
+		#  The docker healthcheck pokes the UDP listener with a
+		#  Status-Server every 2s.  In this namespace the reply
+		#  code is Access-Accept, so the healthcheck also lands
+		#  here.  Skip the linelog for non-proto_load traffic so
+		#  the test framework only sees load-generator output.
+		#
+		if (request.Packet-Type == ::Access-Request) {
+			%linelog_test_framework("kafka-producer-accept {\"User-Name\": %json.quote(%{User-Name})}")
+		}
 		handled
 	}
 
