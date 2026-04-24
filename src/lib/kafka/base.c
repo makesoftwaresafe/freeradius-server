@@ -83,7 +83,7 @@ static int kafka_config_parse_single(char const **out, CONF_PAIR *cp, conf_parse
 	{
 		uint64_t			delta;
 
-		sbuff = FR_SBUFF_IN(buff, sizeof(buff));
+		sbuff = FR_SBUFF_OUT(buff, sizeof(buff));
 		delta = fr_time_delta_to_msec(vb.vb_time_delta);
 		if (fr_sbuff_in_sprintf(&sbuff, "%" PRIu64, delta) < 0) {
 		error:
@@ -98,7 +98,7 @@ static int kafka_config_parse_single(char const **out, CONF_PAIR *cp, conf_parse
 	{
 		size_t size = vb.vb_size;
 
-		sbuff = FR_SBUFF_IN(buff, sizeof(buff));
+		sbuff = FR_SBUFF_OUT(buff, sizeof(buff));
 
 		/*
 		 *	Most options are in bytes, but some are in kilobytes
