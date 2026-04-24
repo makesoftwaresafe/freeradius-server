@@ -810,6 +810,23 @@ do { \
 	 */
 	if (unlang_global_init() < 0) EXIT_WITH_FAILURE;
 
+	/*
+	 *  Initialize the global event loop which handles things like
+	 *  systemd.
+	 *
+	 *  This has to be done post-fork in case we're using kqueue, where the
+	 *  queue isn't inherited by the child process.
+	 *
+	 *  Done before `server_init` so that module instantiate callbacks can
+	 *  register fds / timers against `main_loop_event_list()` directly.
+	 *  `main_loop_init` has no dependencies on module or virtual server
+	 *  state, so this reordering is safe.
+	 */
+	if (main_loop_init() < 0) {
+		PERROR("Failed initialising main event loop");
+		EXIT_WITH_FAILURE;
+	}
+
 	if (server_init(config->root_cs, config->confdir, fr_dict_unconst(fr_dict_internal())) < 0) EXIT_WITH_FAILURE;
 
 	/*
@@ -825,18 +842,6 @@ do { \
 	 */
 	if (fr_snmp_init() < 0) {
 		PERROR("Failed initialising SNMP");
-		EXIT_WITH_FAILURE;
-	}
-
-	/*
-	 *  Initialize the global event loop which handles things like
-	 *  systemd.
-	 *
-	 *  This has to be done post-fork in case we're using kqueue, where the
-	 *  queue isn't inherited by the child process.
-	 */
-	if (main_loop_init() < 0) {
-		PERROR("Failed initialising main event loop");
 		EXIT_WITH_FAILURE;
 	}
 
