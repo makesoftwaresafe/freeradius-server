@@ -148,19 +148,17 @@ test.multi-server.${1}.${2}: $$(TEST_MULTI_SERVER_RENDERED.${1}.${2})
 	{ \
 	    echo "FAILED: test.multi-server.${1}.${2}"; \
 	    echo "$$(CMD)"; \
-	    for f in ${4}/logs/*; do \
+	    for f in ${4}/logs/* ${4}/listener/*; do \
 	        [ -f "$$$$f" ] || continue; \
 	        echo ""; \
 	        echo "=== $$$$f ==="; \
-	        tail -200 "$$$$f"; \
-	    done; \
-	    for f in ${4}/listener/*; do \
-	        [ -f "$$$$f" ] || continue; \
-	        echo ""; \
-	        echo "=== $$$$f ==="; \
-	        echo "-- line-type counts --"; \
-	        awk '{print $$$$1}' "$$$$f" | sort | uniq -c; \
-	        echo "-- last 200 lines --"; \
+	        case "$$$$f" in \
+	            */listener/*) \
+	                echo "-- line-type counts --"; \
+	                awk '{print $$$$1}' "$$$$f" | sort | uniq -c; \
+	                echo "-- last 200 lines --"; \
+	                ;; \
+	        esac; \
 	        tail -200 "$$$$f"; \
 	    done; \
 	    exit 1; \
