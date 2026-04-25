@@ -1256,17 +1256,14 @@ static void fr_network_write(UNUSED fr_event_list_t *el, UNUSED int sockfd, UNUS
 				break;
 
 				/*
-				 *	These are temporary errors.  We try to save the data for later.
+				 *	These are temporary errors.  We just discard the data.
 				 */
 			case ENETDOWN:
 			case ENETUNREACH:
-				if (s->pending) {
-					fr_message_done(&cd->m);
-					return;
-				}
+				if (li->app_io->error) li->app_io->error(li);
 
-				s->written = 0;
-				goto save_pending;
+				fr_message_done(&cd->m);
+				return;
 
 			default:
 				if (li->app_io->error) li->app_io->error(li);
