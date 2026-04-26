@@ -92,19 +92,6 @@ USES_APPLE_DEPRECATED_API
  * by talloc when the module instance is torn down (the library attaches
  * a lifecycle sentinel during config parse).
  */
-/** Coordinates the flush / purge / flush dance across worker thread detaches
- *
- * Lives in its own `malloc`'d allocation because the surrounding
- * `rlm_kafka_t` is `mprotect`'d read-only after `mod_instantiate`, and
- * `pthread_mutex_lock` writes to the mutex memory (mprotect would
- * SIGBUS).  The pointer on `rlm_kafka_t` is immutable once set.
- */
-typedef struct {
-	pthread_mutex_t			mu;		//!< serialises the flush/purge/flush dance so
-							//!< only the first worker through performs it.
-	bool				done;		//!< set once the dance has run; guarded by `mu`.
-} rlm_kafka_detach_sync_t;
-
 typedef struct {
 	fr_kafka_conf_t			kconf;		//!< parsed producer conf - MUST be first
 	fr_time_delta_t			flush_timeout;	//!< How long `mod_detach` waits for in-flight
@@ -117,8 +104,6 @@ typedef struct {
 	rd_kafka_t			*rk;		//!< shared producer, created at mod_instantiate.
 	fr_rb_tree_t			*topics;	//!< rlm_kafka_topic_t keyed by name, read-only
 							//!< after mod_instantiate.
-	rlm_kafka_detach_sync_t		*detach;	//!< flush/purge/flush coordination at shutdown;
-							//!< see `rlm_kafka_detach_sync_t`.
 } rlm_kafka_t;
 
 /** Topic handle
@@ -271,34 +256,6 @@ static void _kafka_log_cb(rd_kafka_t const *rk, int level, char const *fac, char
 		DEBUG("%s - %s - %s", inst->log_prefix, fac, buf);
 		break;
 	}
-}
-
-/** Handle one pctx dequeued from a worker's mailbox
- *
- * Runs on the originating worker.  Cancelled requests (pctx->request
- * NULLed by the signal handler) are freed here; otherwise the request
- * is marked runnable and the interpreter runs `mod_resume` /
- * `kafka_xlat_produce_resume` on this worker to translate the stashed
- * DR into an rcode and free the pctx.
- */
-static inline CC_HINT(always_inline)
-void kafka_delivery_notification(rlm_kafka_msg_ctx_t *pctx)
-{
-	/*
-	 *	Relaxed: `pctx->request` is only ever stored by this
-	 *	worker thread (initial set at produce, NULL at cancel),
-	 *	so program order already guarantees we see our own
-	 *	latest write.  Cross-thread synchronisation with the bg
-	 *	cb's writes to pctx->err / partition / offset has
-	 *	already happened via fr_atomic_ring_pop's acquire.
-	 */
-	request_t	*request = atomic_load_explicit(&pctx->request, memory_order_relaxed);
-
-	if (!request) {
-		free(pctx);
-		return;
-	}
-	unlang_interpret_mark_runnable(request);
 }
 
 /** Worker wake-up callback - the bg cb triggered our EVFILT_USER event
@@ -979,9 +936,17 @@ static int kafka_topics_alloc(rlm_kafka_t *inst)
  * bg cb with an unbounded wait (purge makes the drain finite without
  * needing a user-configured timeout).
  *
- * The dance is producer-wide, so only the first worker into detach
- * actually runs it; `detach->mu` serialises, `detach->done` short-
- * circuits subsequent callers.
+ * Every worker flushes.  The first one through actually drains
+ * librdkafka's queues; subsequent calls return immediately because
+ * `outq_len` is already zero.  The cost is one extra flush call per
+ * worker (cheap when there's nothing to wait for), the gain is that
+ * each worker has its own barrier guaranteeing no bg cb invocation
+ * is mid-flight against this worker's `t->queue` / `t->wake`.
+ *
+ * Order: flush -> drain mailbox -> free wake.  Freeing the wake
+ * before draining would race a bg cb that loaded a non-NULL
+ * `pctx->request` just before cancellation propagated and is about
+ * to call `fr_event_user_trigger(t->wake)`.
  *
  * @param[in] mctx thread-instance ctx.
  * @return 0 (never fails fatally).
@@ -991,40 +956,55 @@ static int mod_thread_detach(module_thread_inst_ctx_t const *mctx)
 	rlm_kafka_t const	*inst = talloc_get_type_abort_const(mctx->mi->data, rlm_kafka_t);
 	rlm_kafka_thread_t	*t = talloc_get_type_abort(mctx->thread, rlm_kafka_thread_t);
 	rlm_kafka_msg_ctx_t	*pctx;
-
-	pthread_mutex_lock(&inst->detach->mu);
-	if (!inst->detach->done) {
-		rd_kafka_resp_err_t	err;
-
-		err = rd_kafka_flush(inst->rk, fr_time_delta_to_msec(inst->flush_timeout));
-		if (unlikely(err != RD_KAFKA_RESP_ERR_NO_ERROR)) {
-			WARN("%s - Shutdown flush timed out, purging %d in-flight message(s)",
-			     inst->log_prefix, rd_kafka_outq_len(inst->rk));
-
-			rd_kafka_purge(inst->rk, RD_KAFKA_PURGE_F_QUEUE | RD_KAFKA_PURGE_F_INFLIGHT);
-
-			/*
-			 *	Drain the purge-generated DRs.  No broker
-			 *	round-trip left; drain time is bounded by
-			 *	bg cb processing speed (us per pctx).
-			 *	-1 == wait indefinitely.
-			 */
-			(void) rd_kafka_flush(inst->rk, -1);
-		}
-
-		inst->detach->done = true;
-	}
-	pthread_mutex_unlock(&inst->detach->mu);
-
-	TALLOC_FREE(t->wake);
+	rd_kafka_resp_err_t	err;
 
 	/*
-	 *	Drain anything the bg cb pushed onto us before the flush
-	 *	returned.  Each pctx has either `request == NULL`
-	 *	(cancelled) or a still-live request whose owning worker
-	 *	is us; the normal dispatch path does the right thing.
+	 *	Flush is thread safe, and only returns after
+	 *	all in flight kafka requests have had their
+	 *	delivery reports run through the callback.
+	 *
+	 *	At the point where thread_detach is called
+	 *	there are no more request_t in progress, so
+	 *	we gurantee the callback will never add additional
+	 *	delivery reports to this thread's queue.
+	 *
+	 *	We call kafka flush in every thread, because
+	 *	there is no explicit synchronisation which
+	 *	gurantees all workers have stopped processing
+	 *	reuests by the time the first thread is being
+	 *	detached, so theoretically new requests can
+	 *	be enqueued by other threads after the first
+	 *	thread has called flush.
 	 */
-	while (fr_atomic_ring_pop(t->queue, (void **)&pctx)) kafka_delivery_notification(pctx);
+	err = rd_kafka_flush(inst->rk, fr_time_delta_to_msec(inst->flush_timeout));
+	if (unlikely(err != RD_KAFKA_RESP_ERR_NO_ERROR)) {
+		WARN("Shutdown flush timed out, purging %d in-flight message(s)",
+		     rd_kafka_outq_len(inst->rk));
+
+		rd_kafka_purge(inst->rk, RD_KAFKA_PURGE_F_QUEUE | RD_KAFKA_PURGE_F_INFLIGHT);
+
+		/*
+		 *	Drain the purge-generated DRs.  No broker
+		 *	round-trip left; drain time is bounded by
+		 *	bg cb processing speed (us per pctx).
+		 *	-1 == wait indefinitely.
+		 */
+		(void) rd_kafka_flush(inst->rk, -1);
+	}
+
+	/*
+	 *	Drain anything the bg cb pushed onto us.  Every pctx
+	 *	here must have `request == NULL` because the framework
+	 *	cancels every yielded request this worker owned before
+	 *	calling thread_detach - assert that to catch any future
+	 *	change to that ordering immediately.
+	 */
+	while (fr_atomic_ring_pop(t->queue, (void **)&pctx)) {
+		fr_assert(atomic_load_explicit(&pctx->request, memory_order_relaxed) == NULL);
+		free(pctx);
+	}
+
+	TALLOC_FREE(t->wake);
 
 	return 0;
 }
@@ -1066,13 +1046,6 @@ static int mod_thread_instantiate(module_thread_inst_ctx_t const *mctx)
 	return 0;
 }
 
-/** Destructor for the detach sync struct: tear down the pthread mutex */
-static int _kafka_detach_sync_free(rlm_kafka_detach_sync_t *d)
-{
-	pthread_mutex_destroy(&d->mu);
-	return 0;
-}
-
 /** Module-instance setup
  *
  * Builds the log prefix, wires up the log + background event callbacks
@@ -1090,13 +1063,13 @@ static int mod_instantiate(module_inst_ctx_t const *mctx)
 	rd_kafka_conf_t	*conf;
 	char		errstr[512];
 
-	MEM(inst->log_prefix = talloc_typed_asprintf(inst, "rlm_kafka (%s)", mctx->mi->name));
-
 	/*
 	 *	rd_kafka_new consumes the conf on success.  The original
 	 *	lives under a talloc sentinel that destroys it at inst
 	 *	teardown, so dup it before handing ownership off.
 	 */
+	MEM(inst->log_prefix = talloc_typed_asprintf(inst, "rlm_kafka (%s)", mctx->mi->name));
+
 	MEM(conf = rd_kafka_conf_dup(inst->kconf.conf));
 	rd_kafka_conf_set_log_cb(conf, _kafka_log_cb);
 	rd_kafka_conf_set_background_event_cb(conf, _kafka_background_event_cb);
@@ -1125,23 +1098,9 @@ static int mod_instantiate(module_inst_ctx_t const *mctx)
 	}
 
 	if (kafka_topics_alloc(inst) < 0) {
-	error:
 		rd_kafka_destroy(inst->rk);
 		inst->rk = NULL;
 		return -1;
-	}
-
-	/*
-	 *	Detach-sync lives outside the mprotected instance region so
-	 *	`pthread_mutex_lock` can write to it.  Allocate orphaned and
-	 *	link to `inst`'s lifetime so teardown is automatic.
-	 */
-	MEM(inst->detach = talloc_zero(NULL, rlm_kafka_detach_sync_t));
-	pthread_mutex_init(&inst->detach->mu, NULL);
-	talloc_set_destructor(inst->detach, _kafka_detach_sync_free);
-	if (talloc_link_ctx(inst, inst->detach) < 0) {
-		TALLOC_FREE(inst->detach);
-		goto error;
 	}
 
 	return 0;
